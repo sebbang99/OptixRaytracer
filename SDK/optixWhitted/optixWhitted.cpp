@@ -138,7 +138,7 @@ const GeometryData::Sphere g_sphere = {
     1.0f                   // radius
 };
 const GeometryData::SphereShell g_sphere_shell = {
-    { 4.0f, 2.3f, -4.0f }, // center
+    { -7.0f, 2.3f, -4.0f }, // center
     0.96f,                 // radius1
     1.0f                   // radius2
 };
@@ -971,10 +971,10 @@ void createSBT( WhittedState &state )
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setAabb(cube);
         hitgroup_records[sbt_idx].data.material_data.pink_mirror = {
-            { 0.0215f, 0.0215f, 0.0215f },   // Ka
+            { 0.515f, 0.0215f, 0.0215f },   // Ka
             { 0.61424f, 0.03568f, 0.03568f },   // Kd
             { 0.633f, 0.727811f, 0.633 },   // Ks
-            { 1.0f, 1.0f, 1.0f },   // Kr
+            { 0.5f, 0.5f, 0.5f },   // Kr
             76.8f,                     // phong_exp
         };
         sbt_idx++;

@@ -172,7 +172,7 @@ static __device__ void phongShade( float3 p_Kd, float3 p_Ka, float3 p_Ks, float3
 extern "C" __global__ void __closesthit__cube_radiance()
 {
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
-    const MaterialData::Phong& phong = sbt_data->material_data.metal;
+    const MaterialData::Phong& phong = sbt_data->material_data.pink_mirror;
 
     float3 object_normal = make_float3(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()),
         __uint_as_float(optixGetAttribute_2()));
