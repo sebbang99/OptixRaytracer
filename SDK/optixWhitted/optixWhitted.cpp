@@ -1140,6 +1140,10 @@ void cleanupState( WhittedState& state )
     OPTIX_CHECK( optixProgramGroupDestroy ( state.radiance_miss_prog_group         ) );
     OPTIX_CHECK( optixProgramGroupDestroy ( state.radiance_floor_prog_group        ) );
     OPTIX_CHECK( optixProgramGroupDestroy ( state.occlusion_floor_prog_group       ) );
+    // Sehee added begin
+    OPTIX_CHECK(optixProgramGroupDestroy(state.radiance_cube_prog_group));
+    OPTIX_CHECK(optixProgramGroupDestroy(state.occlusion_cube_prog_group));
+    // Sehee added end
     OPTIX_CHECK( optixModuleDestroy       ( state.shading_module          ) );
     OPTIX_CHECK( optixModuleDestroy       ( state.geometry_module         ) );
     OPTIX_CHECK( optixModuleDestroy       ( state.camera_module           ) );

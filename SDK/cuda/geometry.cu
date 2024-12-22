@@ -46,7 +46,7 @@ extern "C" __global__ void __intersection__cube()
     const float ray_tmin = optixGetRayTmin(), ray_tmax = optixGetRayTmax();
 
     float t1, t2, t_near = -FLT_MAX, t_far = FLT_MAX;
-    float3 normal;
+    float3 normal = make_float3(0.0f, 0.0f, 0.0f);
 
     // x-axis
     if (ray_dir.x == 0.0f) {
@@ -67,10 +67,9 @@ extern "C" __global__ void __intersection__cube()
         }
         if (t2 < t_far) {
             t_far = t2;
-            normal = make_float3(1.0f, 0.0f, 0.0f);
         }
         if (t_near > t_far) return;
-        if (t_far < 0.0f) return;
+        if (t_far < 0.0f || t_near > t_far) return;
     }
 
     // y-axis
@@ -88,14 +87,13 @@ extern "C" __global__ void __intersection__cube()
         }
         if (t1 > t_near) {
             t_near = t1;
-            normal = make_float3(0.0f, -1.0f, 0.0f);
+            normal = make_float3(0.0f, 1.0f, 0.0f);
         }
         if (t2 < t_far) {
             t_far = t2;
-            normal = make_float3(0.0f, 1.0f, 0.0f);
         }
         if (t_near > t_far) return;
-        if (t_far < 0.0f) return;
+        if (t_far < 0.0f || t_near > t_far) return;
     }
 
     // z-axis
@@ -117,10 +115,9 @@ extern "C" __global__ void __intersection__cube()
         }
         if (t2 < t_far) {
             t_far = t2;
-            normal = make_float3(0.0f, 0.0f, 1.0f);
         }
         if (t_near > t_far) return;
-        if (t_far < 0.0f) return;
+        if (t_far < 0.0f || t_near > t_far) return;
     }
 
     if (t_near == -FLT_MAX)
