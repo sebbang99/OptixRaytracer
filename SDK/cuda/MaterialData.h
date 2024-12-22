@@ -138,6 +138,7 @@ struct MaterialData
         Pbr          pbr;
         Glass        glass;
         Phong        metal;
+        Phong        pink_mirror;
         CheckerPhong checker;
     };
 };

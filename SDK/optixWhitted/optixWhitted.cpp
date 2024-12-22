@@ -970,12 +970,12 @@ void createSBT( WhittedState &state )
             state.radiance_cube_prog_group,
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setAabb(cube);
-        hitgroup_records[sbt_idx].data.material_data.metal = {
-            { 0.2f, 0.5f, 0.5f },   // Ka
-            { 0.2f, 0.7f, 0.8f },   // Kd
-            { 0.9f, 0.9f, 0.9f },   // Ks
-            { 0.5f, 0.5f, 0.5f },   // Kr
-            64,                     // phong_exp
+        hitgroup_records[sbt_idx].data.material_data.pink_mirror = {
+            { 0.0215f, 0.0215f, 0.0215f },   // Ka
+            { 0.61424f, 0.03568f, 0.03568f },   // Kd
+            { 0.633f, 0.727811f, 0.633 },   // Ks
+            { 1.0f, 1.0f, 1.0f },   // Kr
+            76.8f,                     // phong_exp
         };
         sbt_idx++;
 
@@ -1223,7 +1223,7 @@ int main( int argc, char* argv[] )
         //
         if( outfile.empty() )
         {
-            GLFWwindow* window = sutil::initUI( "optixWhitted", state.params.width, state.params.height );
+            GLFWwindow* window = sutil::initUI( "120240282 SEHEE CHO", state.params.width, state.params.height );
             glfwSetMouseButtonCallback  ( window, mouseButtonCallback   );
             glfwSetCursorPosCallback    ( window, cursorPosCallback     );
             glfwSetWindowSizeCallback   ( window, windowSizeCallback    );
