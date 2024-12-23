@@ -35,8 +35,18 @@
 #include "helpers.h"
 #include "whitted.h"
 
+// Sehee added begin
+
+// Sehee added end
+
 extern "C" {
 __constant__ whitted::LaunchParams params;
+}
+
+__device__ float3 make_float_3(const float *x) {
+    float3 f3;
+    f3.x = x[0]; f3.y = x[1]; f3.z = x[2];
+    return f3;
 }
 
 static __device__ __inline__ whitted::PayloadRadiance getPayloadRadiance()
@@ -176,6 +186,25 @@ extern "C" __global__ void __closesthit__cube_radiance()
 
     float3 object_normal = make_float3(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()),
         __uint_as_float(optixGetAttribute_2()));
+
+    float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
+    float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
+    phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
+}
+
+extern "C" __global__ void __closesthit__cow_radiance()
+{
+    const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
+    const MaterialData::Phong& phong = sbt_data->material_data.metal;
+
+    float2 barycentrics = make_float2(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()));
+
+    const float3 n0 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[optixGetPrimitiveIndex()].norm);
+    const float3 n1 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[optixGetPrimitiveIndex()].norm);
+    const float3 n2 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[optixGetPrimitiveIndex()].norm);
+
+    float3 object_normal = (1.0f - barycentrics.x - barycentrics.y) * n0 + barycentrics.x * n1 
+        + barycentrics.y * n2;
 
     float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
     float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);

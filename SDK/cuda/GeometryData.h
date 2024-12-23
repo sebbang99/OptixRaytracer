@@ -55,6 +55,16 @@ struct Vec4f
     float x, y, z, w;
 };
 
+typedef struct _Vertex {
+    float pos[3];  // Position
+    float norm[3]; // Normal
+    float tex[2];  // Texture coordinates
+} Vertex;
+
+typedef struct _Index {
+    unsigned int v1, v2, v3; // Triangle indices
+} Index;
+
 struct GeometryData
 {
     enum Type
@@ -68,7 +78,8 @@ struct GeometryData
         CUBIC_CURVE_ARRAY     = 6,
         CATROM_CURVE_ARRAY    = 7,
         AABB = 8,
-        UNKNOWN_TYPE = 9
+        MY_TRIANGLE_MESH = 9,
+        UNKNOWN_TYPE = 10
     };
 
     // The number of supported texture spaces per mesh.
@@ -89,6 +100,11 @@ struct GeometryData
         BufferView<Vec4f>  colors;                    // The buffer view may not be aligned, so don't use float4
     };
 
+    struct MyTriangleMesh
+    {
+        Vertex* vertices;
+        Index* indices;
+    };
 
     struct Sphere
     {
@@ -155,6 +171,19 @@ struct GeometryData
     {
         assert(type == AABB);
         return aabb;
+    }
+
+    void setMyTriangleMesh(const MyTriangleMesh& t)
+    {
+        assert(type == UNKNOWN_TYPE);
+        type = MY_TRIANGLE_MESH;
+        my_triangle_mesh = t;
+    }
+
+    SUTIL_HOSTDEVICE const MyTriangleMesh& getMyTriangleMesh() const
+    {
+        assert(type == MY_TRIANGLE_MESH);
+        return my_triangle_mesh;
     }
 
     void setTriangleMesh( const TriangleMesh& t )
@@ -279,5 +308,6 @@ struct GeometryData
         Parallelogram parallelogram;
         Curves        curves;
         AABBs         aabb;
+        MyTriangleMesh my_triangle_mesh;
     };
 };

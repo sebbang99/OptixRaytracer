@@ -57,10 +57,14 @@
 #include <iomanip>
 #include <cstring>
 
-#include "models.h"
+#include <iostream>
+#include <vector>
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+
+const uint32_t POLYGON_COUNT = 1;
 const uint32_t BUILD_INPUT_COUNT = 2;
-
 //------------------------------------------------------------------------------
 //
 // Globals
@@ -94,6 +98,81 @@ const uint32_t OBJ_COUNT = 4;
 // idx 2 : floor
 // idx 3 : cube
 
+void load_obj_file(const std::string& filename, std::vector<_Vertex>& vertices, std::vector<_Index>& indices) {
+    //tinyobj::ObjReader reader;
+
+    //if (!reader.ParseFromFile(filename)) {  // call LoadObj() inside here.
+    //    if (!reader.Error().empty()) {
+    //        std::cerr << "Error: " << reader.Error() << "\n";
+    //    }
+    //    exit(EXIT_FAILURE);
+    //}
+
+    //if (!reader.Warning().empty()) {
+    //    std::cout << "Warning: " << reader.Warning() << "\n";
+    //}
+
+    //const auto& attrib = reader.GetAttrib();
+    //const auto& shapes = reader.GetShapes();
+
+    //// Iterate over shapes (each shape contains multiple faces)
+    //for (const auto& shape : shapes) {
+    //    size_t index_offset = 0;
+
+    //    // Iterate over faces
+    //    for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+    //        size_t num_face_vertices = shape.mesh.num_face_vertices[f];
+    //        if (num_face_vertices != 3) {
+    //            std::cerr << "Only triangular faces are supported.\n";
+    //            exit(EXIT_FAILURE);
+    //        }
+
+    //        _Index index;
+    //        for (size_t v = 0; v < num_face_vertices; ++v) {
+    //            tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
+    //            _Vertex vertex = {};
+
+    //            // Get vertex position
+    //            vertex.pos[0] = attrib.vertices[3 * idx.vertex_index + 0];
+    //            vertex.pos[1] = attrib.vertices[3 * idx.vertex_index + 1];
+    //            vertex.pos[2] = attrib.vertices[3 * idx.vertex_index + 2];
+
+    //            // Get vertex normal
+    //            if (idx.normal_index >= 0) {
+    //                vertex.norm[0] = attrib.normals[3 * idx.normal_index + 0];
+    //                vertex.norm[1] = attrib.normals[3 * idx.normal_index + 1];
+    //                vertex.norm[2] = attrib.normals[3 * idx.normal_index + 2];
+    //            }
+
+    //            // Get texture coordinates
+    //            if (idx.texcoord_index >= 0) {
+    //                vertex.tex[0] = attrib.texcoords[2 * idx.texcoord_index + 0];
+    //                vertex.tex[1] = attrib.texcoords[2 * idx.texcoord_index + 1];
+    //            }
+
+    //            // Add vertex to list
+    //            vertices.push_back(vertex);
+
+    //            // Add index
+    //            if (v == 0) index.v1 = static_cast<unsigned int>(vertices.size() - 1);
+    //            if (v == 1) index.v2 = static_cast<unsigned int>(vertices.size() - 1);
+    //            if (v == 2) index.v3 = static_cast<unsigned int>(vertices.size() - 1);
+    //        }
+    //        indices.push_back(index);
+    //        index_offset += num_face_vertices;
+    //    }
+    //}
+
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filename.c_str())) {
+        throw std::runtime_error(warn + err);
+    }
+}
+
 struct WhittedState
 {
     OptixDeviceContext          context                   = 0;
@@ -117,6 +196,8 @@ struct WhittedState
     // Sehee added begin
     OptixProgramGroup           radiance_cube_prog_group = 0;
     OptixProgramGroup           occlusion_cube_prog_group = 0;
+    OptixProgramGroup           radiance_cow_prog_group = 0;
+    OptixProgramGroup           occlusion_cow_prog_group = 0;
     // Sehee added end
 
     OptixPipeline               pipeline                  = 0;
@@ -154,6 +235,7 @@ const GeometryData::AABBs cube = {
     { -12.0f, 0.0f, -2.0f },    // min
     { -6.0f, 6.0f, 4.0f }       // max
 };
+GeometryData::MyTriangleMesh cow;
 
 //------------------------------------------------------------------------------
 //
@@ -434,7 +516,13 @@ void createGeometry( WhittedState &state )
     // Load triangle polygon model into device memory
     std::vector<Vertex> vertices;
     std::vector<Index> indices;
-    load_obj_file("../data/Cow/wuson.obj", vertices, indices);
+
+    load_obj_file("../../../SDK/data/Cow/wuson.obj", vertices, indices);
+    cow.vertices = (Vertex *)malloc(vertices.size() * sizeof(Vertex));
+    memcpy(cow.vertices, vertices.data(), vertices.size() * sizeof(Vertex));
+    cow.indices = (Index*)malloc(indices.size() * sizeof(Index));
+    memcpy(cow.indices, indices.data(), indices.size() * sizeof(Index));
+
     CUdeviceptr d_tri_vertex, d_tri_index;
 
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_vertex
@@ -508,7 +596,7 @@ void createGeometry( WhittedState &state )
     triangle_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     triangle_input.triangleArray.vertexStrideInBytes = 32;
     triangle_input.triangleArray.indexBuffer = d_tri_index;
-    triangle_input.triangleArray.numIndexTriplets = indices.size() / 3;
+    triangle_input.triangleArray.numIndexTriplets = indices.size(); // same as the ret value of optixGetPrimitiveIndex().
     triangle_input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     triangle_input.triangleArray.indexStrideInBytes = 12;
     //triangle_input.triangleArray.preTransform = a;
@@ -813,6 +901,50 @@ static void createCubeProgram(WhittedState& state, std::vector<OptixProgramGroup
     state.occlusion_cube_prog_group = occlusion_cube_prog_group;
 }
 
+static void createCowProgram(WhittedState& state, std::vector<OptixProgramGroup>& program_groups)
+{
+    OptixProgramGroup           radiance_cow_prog_group;
+    OptixProgramGroupOptions    radiance_cow_prog_group_options = {};
+    OptixProgramGroupDesc       radiance_cow_prog_group_desc = {};
+    radiance_cow_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    // No .moduleIS because it has has built-in intersection shader.
+    radiance_cow_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    radiance_cow_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__cow_radiance";
+    radiance_cow_prog_group_desc.hitgroup.moduleAH = nullptr;
+    radiance_cow_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &radiance_cow_prog_group_desc,
+        1,
+        &radiance_cow_prog_group_options,
+        LOG, &LOG_SIZE,
+        &radiance_cow_prog_group));
+
+    program_groups.push_back(radiance_cow_prog_group);
+    state.radiance_cow_prog_group = radiance_cow_prog_group;
+
+    OptixProgramGroup           occlusion_cow_prog_group;
+    OptixProgramGroupOptions    occlusion_cow_prog_group_options = {};
+    OptixProgramGroupDesc       occlusion_cow_prog_group_desc = {};
+    occlusion_cow_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    occlusion_cow_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    occlusion_cow_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__full_occlusion";
+    occlusion_cow_prog_group_desc.hitgroup.moduleAH = nullptr;
+    occlusion_cow_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &occlusion_cow_prog_group_desc,
+        1,
+        &occlusion_cow_prog_group_options,
+        LOG, &LOG_SIZE,
+        &occlusion_cow_prog_group));
+
+    program_groups.push_back(occlusion_cow_prog_group);
+    state.occlusion_cow_prog_group = occlusion_cow_prog_group;
+}
+
 static void createMissProgram( WhittedState &state, std::vector<OptixProgramGroup> &program_groups )
 {
     OptixProgramGroupOptions    miss_prog_group_options = {};
@@ -867,6 +999,7 @@ void createPipeline( WhittedState &state )
     createFloorProgram( state, program_groups );
     // Sehee added begin
     createCubeProgram(state, program_groups);
+    createCowProgram(state, program_groups);
     // Sehee added end
     createMissProgram( state, program_groups );
 
@@ -951,7 +1084,7 @@ void createSBT( WhittedState &state )
 
     // Hitgroup program record
     {
-        const size_t count_records = whitted::RAY_TYPE_COUNT * OBJ_COUNT;
+        const size_t count_records = whitted::RAY_TYPE_COUNT * (OBJ_COUNT + POLYGON_COUNT);
         HitGroupRecord hitgroup_records[count_records];
 
         // Note: Fill SBT record array the same order like AS is built.
@@ -1050,6 +1183,26 @@ void createSBT( WhittedState &state )
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setAabb(cube);
         sbt_idx++;
+
+        // Cow
+        OPTIX_CHECK(optixSbtRecordPackHeader(
+            state.radiance_cow_prog_group,
+            &hitgroup_records[sbt_idx]));
+        hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(cow);
+        hitgroup_records[sbt_idx].data.material_data.metal = {
+            { 0.2f, 0.5f, 0.5f },   // Ka
+            { 0.2f, 0.7f, 0.8f },   // Kd
+            { 0.9f, 0.9f, 0.9f },   // Ks
+            { 0.5f, 0.5f, 0.5f },   // Kr
+            64,                     // phong_exp
+        };
+        sbt_idx++;
+
+        OPTIX_CHECK(optixSbtRecordPackHeader(
+            state.occlusion_cow_prog_group,
+            &hitgroup_records[sbt_idx]));
+        hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(cow);
+        //sbt_idx++;
 
         CUdeviceptr d_hitgroup_records;
         size_t      sizeof_hitgroup_record = sizeof( HitGroupRecord );
@@ -1309,7 +1462,7 @@ int main( int argc, char* argv[] )
                 output_buffer.setStream( state.stream );
                 sutil::GLDisplay gl_display;
 
-                std::chrono::duration<double> state_update_time( 0.0 );
+                std::chrono::duration<double > state_update_time( 0.0 );
                 std::chrono::duration<double> render_time( 0.0 );
                 std::chrono::duration<double> display_time( 0.0 );
 
