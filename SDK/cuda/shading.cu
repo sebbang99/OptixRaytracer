@@ -197,11 +197,18 @@ extern "C" __global__ void __closesthit__cow_radiance()
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
     const MaterialData::Phong& phong = sbt_data->material_data.metal;
 
-    float2 barycentrics = make_float2(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()));
+    //float2 barycentrics = make_float2(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()));
+    float2 barycentrics = optixGetTriangleBarycentrics();
 
-    const float3 n0 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[optixGetPrimitiveIndex()].norm);
-    const float3 n1 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[optixGetPrimitiveIndex()].norm);
-    const float3 n2 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[optixGetPrimitiveIndex()].norm);
+    const unsigned int primitiveIndex = optixGetPrimitiveIndex();
+    const unsigned int i0 = sbt_data->geometry_data.getMyTriangleMesh().indices[primitiveIndex].v1;
+    const unsigned int i1 = sbt_data->geometry_data.getMyTriangleMesh().indices[primitiveIndex].v2;
+    const unsigned int i2 = sbt_data->geometry_data.getMyTriangleMesh().indices[primitiveIndex].v3;
+
+    const float3 n0 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[i0].norm);
+    const float3 n1 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[i1].norm);
+    const float3 n2 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[i2].norm);
+
 
     float3 object_normal = (1.0f - barycentrics.x - barycentrics.y) * n0 + barycentrics.x * n1 
         + barycentrics.y * n2;

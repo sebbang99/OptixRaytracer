@@ -102,8 +102,8 @@ struct GeometryData
 
     struct MyTriangleMesh
     {
-        Vertex* vertices;
-        Index* indices;
+        Vertex *vertices;
+        Index *indices;
     };
 
     struct Sphere
