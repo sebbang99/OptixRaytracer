@@ -1288,11 +1288,11 @@ void createSBT( WhittedState &state )
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(cow);
         hitgroup_records[sbt_idx].data.material_data.red_velvet = {
-            { 0.8f, 0.2f, 0.2f },   // Ka
-            { 0.8f, 0.2f, 0.3f },   // Kd
-            { 0.1f, 0.1f, 0.1f },   // Ks
+            { 0.1745f, 0.01175f, 0.01175f },   // Ka
+            { 0.61424f, 0.34136f, 0.44136f },   // Kd
+            { 0.727811f, 0.626959f, 0.626959f },   // Ks
             { 0.0f, 0.0f, 0.0f },   // Kr
-            -1.0f,                     // phong_exp
+            76.8,                     // phong_exp
         };
         sbt_idx++;
 
