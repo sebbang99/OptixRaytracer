@@ -217,6 +217,19 @@ extern "C" __global__ void __closesthit__cow_radiance()
     //float2 barycentrics = optixGetTriangleBarycentrics();
 }
 
+extern "C" __global__ void __closesthit__hexagonal_prism_radiance()
+{
+    const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
+    const MaterialData::Phong& phong = sbt_data->material_data.red_velvet;
+
+    float3 object_normal = make_float3(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()),
+        __uint_as_float(optixGetAttribute_2()));
+
+    float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
+    float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
+    phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
+}
+
 extern "C" __global__ void __closesthit__checker_radiance()
 {
     const whitted::HitGroupData*      sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();

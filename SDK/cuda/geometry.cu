@@ -36,6 +36,11 @@
 #include <float.h>
 #include <iostream>
 
+float __device__ _min(float a, float b) {
+    if (a < b) return a;
+    else return b;
+}
+
 extern "C" __global__ void __intersection__cube()
 {
     const whitted::HitGroupData* sbt_data = reinterpret_cast<whitted::HitGroupData*>(optixGetSbtDataPointer());
@@ -159,6 +164,52 @@ extern "C" __global__ void __intersection__parallelogram()
     }
 }
 
+extern "C" __global__ void __intersection__hexagonal_prism()
+{
+    const whitted::HitGroupData* sbt_data = reinterpret_cast<whitted::HitGroupData*>(optixGetSbtDataPointer());
+    const GeometryData::HexagonalPrism& hexm = sbt_data->geometry_data.getHexagonalPrism();
+
+    const float3 ray_orig = optixGetWorldRayOrigin();
+    const float3 ray_dir = optixGetWorldRayDirection();
+    const float  ray_tmin = optixGetRayTmin(), ray_tmax = optixGetRayTmax();
+
+    const float radius = hexm.radius;
+    const float height = hexm.height;
+
+    const float ks3 = 0.866025f;    // degree 60
+
+    // normals
+    const float3 n1 = make_float3(1.0, 0.0, 0.0);
+    const float3 n2 = make_float3(0.5, 0.0, ks3);
+    const float3 n3 = make_float3(-0.5, 0.0, ks3);
+    const float3 n4 = make_float3(0.0, 1.0, 0.0);
+
+    // slabs intersections
+    float3 t1 = make_float3((make_float2(radius, -radius) - dot(ray_orig, n1)) / dot(ray_dir, n1), 1.0);
+    float3 t2 = make_float3((make_float2(radius, -radius) - dot(ray_orig, n2)) / dot(ray_dir, n2), 1.0);
+    float3 t3 = make_float3((make_float2(radius, -radius) - dot(ray_orig, n3)) / dot(ray_dir, n3), 1.0);
+    float3 t4 = make_float3((make_float2(height, -height) - dot(ray_orig, n4)) / dot(ray_dir, n4), 1.0);
+
+    // intersection selection
+    if (t1.y < t1.x) t1 = make_float3(t1.y, t1.x, -1.0);
+    if (t2.y < t2.x) t2 = make_float3(t2.y, t2.x, -1.0);
+    if (t3.y < t3.x) t3 = make_float3(t3.y, t3.x, -1.0);
+    if (t4.y < t4.x) t4 = make_float3(t4.y, t4.x, -1.0);
+
+    float4 tN = make_float4(t1.x, t1.z * n1);
+    if (t2.x > tN.x) tN = make_float4(t2.x, t2.z * n2);
+    if (t3.x > tN.x) tN = make_float4(t3.x, t3.z * n3);
+    if (t4.x > tN.x) tN = make_float4(t4.x, t4.z * n4);
+
+    float tF = _min(_min(t1.y, t2.y), _min(t3.y, t4.y));
+
+    // no intersection
+    if (tN.x > tF || tF < 0.0);
+    else {
+        float3 n = make_float3(tN.x, tN.y, tN.z);
+        optixReportIntersection(tF, 0, float3_as_args(n));
+    }
+}
 
 extern "C" __global__ void __intersection__sphere_shell()
 {

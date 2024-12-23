@@ -93,11 +93,12 @@ const int         max_trace = 12;
 //------------------------------------------------------------------------------
 typedef sutil::Record<whitted::HitGroupData> HitGroupRecord;
 
-const uint32_t OBJ_COUNT = 4;
+const uint32_t OBJ_COUNT = 5;
 // idx 0 : blue sphere
 // idx 1 : sphere shell
 // idx 2 : floor
 // idx 3 : cube
+// idx 4 : hexagonal prism
 
 struct Instance
 {
@@ -201,6 +202,8 @@ struct WhittedState
     OptixProgramGroup           occlusion_cube_prog_group = 0;
     OptixProgramGroup           radiance_cow_prog_group = 0;
     OptixProgramGroup           occlusion_cow_prog_group = 0;
+    OptixProgramGroup           radiance_hexagonal_prism_prog_group = 0;
+    OptixProgramGroup           occlusion_hexagonal_prism_prog_group = 0;
     // Sehee added end
 
     OptixPipeline               pipeline                  = 0;
@@ -239,6 +242,10 @@ const GeometryData::AABBs cube = {
     { -6.0f, 6.0f, 4.0f }       // max
 };
 GeometryData::MyTriangleMesh cow;
+const GeometryData::HexagonalPrism hexm = {
+    2.0f,       // radius
+    1.0f        // height
+};
 
 //------------------------------------------------------------------------------
 //
@@ -424,6 +431,17 @@ inline OptixAabb cube_bound(float3 min, float3 max)
     };
 }
 
+inline OptixAabb hexagonal_prism_bound(float radius, float height)
+{
+    float3 m_min = make_float3(-radius, -height, -radius);
+    float3 m_max = make_float3(radius, height, radius);
+
+    return {
+        m_min.x, m_min.y, m_min.z,
+        m_max.x, m_max.y, m_max.z
+    };
+}
+
 static void buildGas(
     const WhittedState &state,
     const OptixAccelBuildOptions &accel_options,
@@ -584,7 +602,8 @@ void createGeometry( WhittedState &state )
     OptixAabb   aabb[OBJ_COUNT] = { sphere_bound( g_sphere.center, g_sphere.radius ),
                                   sphere_bound( g_sphere_shell.center, g_sphere_shell.radius2 ),
                                   parallelogram_bound( g_floor.v1, g_floor.v2, g_floor.anchor ),
-                                            cube_bound(cube.min, cube.max) };
+                                            cube_bound(cube.min, cube.max),
+                                            hexagonal_prism_bound(hexm.radius, hexm.height)};
     CUdeviceptr d_aabb;
 
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_aabb
@@ -641,6 +660,8 @@ void createGeometry( WhittedState &state )
         /* flag for floor */
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
         /* flag for cube */
+        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
+        /* flag for hexagonal prism */
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
     };
     uint32_t triangle_input_flags[] = {
@@ -648,7 +669,7 @@ void createGeometry( WhittedState &state )
     };
     /* TODO: This API cannot control flags for different ray type */
 
-    const uint32_t sbt_index[] = { 0, 1, 2, 3 };
+    const uint32_t sbt_index[] = { 0, 1, 2, 3, 4 };
     CUdeviceptr    d_sbt_index;
 
     //const uint32_t sbt_index_tri[] = { 0 };
@@ -1043,6 +1064,53 @@ static void createCowProgram(WhittedState& state, std::vector<OptixProgramGroup>
     state.occlusion_cow_prog_group = occlusion_cow_prog_group;
 }
 
+static void createHexagonalPrismProgram(WhittedState& state, std::vector<OptixProgramGroup>& program_groups)
+{
+    OptixProgramGroup           radiance_hexagonal_prism_prog_group;
+    OptixProgramGroupOptions    radiance_hexagonal_prism_prog_group_options = {};
+    OptixProgramGroupDesc       radiance_hexagonal_prism_prog_group_desc = {};
+    radiance_hexagonal_prism_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    radiance_hexagonal_prism_prog_group_desc.hitgroup.moduleIS = state.geometry_module;
+    radiance_hexagonal_prism_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__hexagonal_prism";
+    radiance_hexagonal_prism_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    radiance_hexagonal_prism_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__hexagonal_prism_radiance";
+    radiance_hexagonal_prism_prog_group_desc.hitgroup.moduleAH = nullptr;
+    radiance_hexagonal_prism_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &radiance_hexagonal_prism_prog_group_desc,
+        1,
+        &radiance_hexagonal_prism_prog_group_options,
+        LOG, &LOG_SIZE,
+        &radiance_hexagonal_prism_prog_group));
+
+    program_groups.push_back(radiance_hexagonal_prism_prog_group);
+    state.radiance_hexagonal_prism_prog_group = radiance_hexagonal_prism_prog_group;
+
+    OptixProgramGroup           occlusion_hexagonal_prism_prog_group;
+    OptixProgramGroupOptions    occlusion_hexagonal_prism_prog_group_options = {};
+    OptixProgramGroupDesc       occlusion_hexagonal_prism_prog_group_desc = {};
+    occlusion_hexagonal_prism_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    occlusion_hexagonal_prism_prog_group_desc.hitgroup.moduleIS = state.geometry_module;
+    occlusion_hexagonal_prism_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__hexagonal_prism";
+    occlusion_hexagonal_prism_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    occlusion_hexagonal_prism_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__full_occlusion";
+    occlusion_hexagonal_prism_prog_group_desc.hitgroup.moduleAH = nullptr;
+    occlusion_hexagonal_prism_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &occlusion_hexagonal_prism_prog_group_desc,
+        1,
+        &occlusion_hexagonal_prism_prog_group_options,
+        LOG, &LOG_SIZE,
+        &occlusion_hexagonal_prism_prog_group));
+
+    program_groups.push_back(occlusion_hexagonal_prism_prog_group);
+    state.occlusion_hexagonal_prism_prog_group = occlusion_hexagonal_prism_prog_group;
+}
+
 static void createMissProgram( WhittedState &state, std::vector<OptixProgramGroup> &program_groups )
 {
     OptixProgramGroupOptions    miss_prog_group_options = {};
@@ -1098,6 +1166,7 @@ void createPipeline( WhittedState &state )
     // Sehee added begin
     createCubeProgram(state, program_groups);
     createCowProgram(state, program_groups);
+    createHexagonalPrismProgram(state, program_groups);
     // Sehee added end
     createMissProgram( state, program_groups );
 
@@ -1280,6 +1349,26 @@ void createSBT( WhittedState &state )
             state.occlusion_cube_prog_group,
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setAabb(cube);
+        sbt_idx++;
+
+        // Hexagonal prism
+        OPTIX_CHECK(optixSbtRecordPackHeader(
+            state.radiance_hexagonal_prism_prog_group,
+            &hitgroup_records[sbt_idx]));
+        hitgroup_records[sbt_idx].data.geometry_data.setHexagonalPrism(hexm);
+        hitgroup_records[sbt_idx].data.material_data.red_velvet = {
+            { 0.1745f, 0.01175f, 0.01175f },   // Ka
+            { 0.61424f, 0.34136f, 0.44136f },   // Kd
+            { 0.727811f, 0.626959f, 0.626959f },   // Ks
+            { 0.0f, 0.0f, 0.0f },   // Kr
+            76.8,                     // phong_exp
+        };
+        sbt_idx++;
+
+        OPTIX_CHECK(optixSbtRecordPackHeader(
+            state.occlusion_hexagonal_prism_prog_group,
+            &hitgroup_records[sbt_idx]));
+        hitgroup_records[sbt_idx].data.geometry_data.setHexagonalPrism(hexm);
         sbt_idx++;
 
         // Cow

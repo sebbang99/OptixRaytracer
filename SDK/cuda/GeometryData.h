@@ -79,7 +79,8 @@ struct GeometryData
         CATROM_CURVE_ARRAY    = 7,
         AABB = 8,
         MY_TRIANGLE_MESH = 9,
-        UNKNOWN_TYPE = 10
+        HEXAGONAL_PRISM = 10,
+        UNKNOWN_TYPE = 11
     };
 
     // The number of supported texture spaces per mesh.
@@ -104,6 +105,12 @@ struct GeometryData
     {
         Vertex *vertices;
         Index *indices;
+    };
+
+    struct HexagonalPrism
+    {
+        float radius;
+        float height;
     };
 
     struct Sphere
@@ -184,6 +191,19 @@ struct GeometryData
     {
         assert(type == MY_TRIANGLE_MESH);
         return my_triangle_mesh;
+    }
+
+    void setHexagonalPrism(const HexagonalPrism& hp)
+    {
+        assert(type == UNKNOWN_TYPE);
+        type = HEXAGONAL_PRISM;
+        hexagonal_prism = hp;
+    }
+
+    SUTIL_HOSTDEVICE const HexagonalPrism& getHexagonalPrism() const
+    {
+        assert(type == HEXAGONAL_PRISM);
+        return hexagonal_prism;
     }
 
     void setTriangleMesh( const TriangleMesh& t )
@@ -309,5 +329,6 @@ struct GeometryData
         Curves        curves;
         AABBs         aabb;
         MyTriangleMesh my_triangle_mesh;
+        HexagonalPrism hexagonal_prism;
     };
 };
