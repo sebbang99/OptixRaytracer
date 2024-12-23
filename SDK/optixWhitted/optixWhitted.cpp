@@ -57,6 +57,9 @@
 #include <iomanip>
 #include <cstring>
 
+#include "models.h"
+
+const uint32_t BUILD_INPUT_COUNT = 2;
 
 //------------------------------------------------------------------------------
 //
@@ -339,18 +342,19 @@ inline OptixAabb cube_bound(float3 min, float3 max)
 static void buildGas(
     const WhittedState &state,
     const OptixAccelBuildOptions &accel_options,
-    const OptixBuildInput &build_input,
+    const OptixBuildInput *build_inputs,
     OptixTraversableHandle &gas_handle,
     CUdeviceptr &d_gas_output_buffer
     )
 {
+    // Note : tempSizeInBytes has size of the memory temporarily used for building.
     OptixAccelBufferSizes gas_buffer_sizes;
     CUdeviceptr d_temp_buffer_gas;
 
     OPTIX_CHECK( optixAccelComputeMemoryUsage(
         state.context,
         &accel_options,
-        &build_input,
+        build_inputs,
         1,
         &gas_buffer_sizes));
 
@@ -358,7 +362,7 @@ static void buildGas(
         reinterpret_cast<void**>( &d_temp_buffer_gas ),
         gas_buffer_sizes.tempSizeInBytes));
 
-    // non-compacted output and size of compacted GAS
+    // non-compacted output and size of compacted resulting GAS
     CUdeviceptr d_buffer_temp_output_gas_and_compacted_size;
     size_t compactedSizeOffset = roundUp<size_t>( gas_buffer_sizes.outputSizeInBytes, 8ull );
     CUDA_CHECK( cudaMalloc(
@@ -366,15 +370,16 @@ static void buildGas(
                 compactedSizeOffset + 8
                 ) );
 
+    // Note : for emitted post-build properties
     OptixAccelEmitDesc emitProperty = {};
     emitProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
     emitProperty.result = (CUdeviceptr)((char*)d_buffer_temp_output_gas_and_compacted_size + compactedSizeOffset);
 
     OPTIX_CHECK( optixAccelBuild(
         state.context,
-        0,
+        0,  // stream
         &accel_options,
-        &build_input,
+        build_inputs,
         1,
         d_temp_buffer_gas,
         gas_buffer_sizes.tempSizeInBytes,
@@ -426,6 +431,30 @@ void createGeometry( WhittedState &state )
                 cudaMemcpyHostToDevice
                 ) );
 
+    // Load triangle polygon model into device memory
+    std::vector<Vertex> vertices;
+    std::vector<Index> indices;
+    load_obj_file("../data/Cow/wuson.obj", vertices, indices);
+    CUdeviceptr d_tri_vertex, d_tri_index;
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_vertex
+        ), sizeof(vertices)));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(d_tri_vertex),
+        &vertices,
+        sizeof(vertices),
+        cudaMemcpyHostToDevice
+    ));
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_index
+        ), sizeof(indices)));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(d_tri_index),
+        &indices,
+        sizeof(indices),
+        cudaMemcpyHostToDevice
+    ));
+
     // Setup AABB build input
     uint32_t aabb_input_flags[] = {
         /* flags for metal sphere */
@@ -437,10 +466,16 @@ void createGeometry( WhittedState &state )
         /* flag for cube */
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
     };
+    uint32_t triangle_input_flags[] = {
+        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
+    };
     /* TODO: This API cannot control flags for different ray type */
 
     const uint32_t sbt_index[] = { 0, 1, 2, 3 };
     CUdeviceptr    d_sbt_index;
+
+    const uint32_t sbt_index_tri[] = { 0 };
+    CUdeviceptr d_sbt_index_tri;
 
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_sbt_index ), sizeof(sbt_index) ) );
     CUDA_CHECK( cudaMemcpy(
@@ -448,6 +483,13 @@ void createGeometry( WhittedState &state )
         sbt_index,
         sizeof( sbt_index ),
         cudaMemcpyHostToDevice ) );
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_sbt_index_tri), sizeof(sbt_index_tri)));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(d_sbt_index_tri),
+        sbt_index_tri,
+        sizeof(sbt_index_tri),
+        cudaMemcpyHostToDevice));
 
     OptixBuildInput aabb_input = {};
     aabb_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
@@ -459,17 +501,41 @@ void createGeometry( WhittedState &state )
     aabb_input.customPrimitiveArray.sbtIndexOffsetSizeInBytes    = sizeof( uint32_t );
     aabb_input.customPrimitiveArray.primitiveIndexOffset         = 0;
 
+    OptixBuildInput triangle_input = {};
+    triangle_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+    triangle_input.triangleArray.vertexBuffers = &d_tri_vertex;
+    triangle_input.triangleArray.numVertices = vertices.size();
+    triangle_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+    triangle_input.triangleArray.vertexStrideInBytes = 32;
+    triangle_input.triangleArray.indexBuffer = d_tri_index;
+    triangle_input.triangleArray.numIndexTriplets = indices.size() / 3;
+    triangle_input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+    triangle_input.triangleArray.indexStrideInBytes = 12;
+    //triangle_input.triangleArray.preTransform = a;
+    triangle_input.triangleArray.flags = triangle_input_flags;
+    triangle_input.triangleArray.numSbtRecords = 1;
+    triangle_input.triangleArray.sbtIndexOffsetBuffer = d_sbt_index_tri;
+    triangle_input.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
+    //triangle_input.triangleArray.sbtIndexOffsetStrideInBytes = a;
+    triangle_input.triangleArray.primitiveIndexOffset = 0;
+    //triangle_input.triangleArray.transformFormat = a;
 
     OptixAccelBuildOptions accel_options = {
         OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
         OPTIX_BUILD_OPERATION_BUILD         // operation
     };
 
+    OptixAccelBuildOptions accel_options_tri = {
+    OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
+    OPTIX_BUILD_OPERATION_BUILD         // operation
+    };
+
+    const OptixBuildInput build_inputs[BUILD_INPUT_COUNT] = {aabb_input, triangle_input};
 
     buildGas(
         state,
         accel_options,
-        aabb_input,
+        build_inputs,
         state.gas_handle,
         state.d_gas_output_buffer);
 
