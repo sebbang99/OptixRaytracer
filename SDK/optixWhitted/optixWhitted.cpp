@@ -65,6 +65,7 @@
 
 const uint32_t POLYGON_COUNT = 1;
 const uint32_t BUILD_INPUT_COUNT = 2;
+const uint32_t GAS_COUNT = 2;
 //------------------------------------------------------------------------------
 //
 // Globals
@@ -97,6 +98,11 @@ const uint32_t OBJ_COUNT = 4;
 // idx 1 : sphere shell
 // idx 2 : floor
 // idx 3 : cube
+
+struct Instance
+{
+    float transform[12];
+};
 
 void load_obj_file(const std::string& filename, std::vector<Vertex>& vertices, std::vector<Index>& indices) {
     tinyobj::ObjReader reader;
@@ -167,8 +173,14 @@ void load_obj_file(const std::string& filename, std::vector<Vertex>& vertices, s
 struct WhittedState
 {
     OptixDeviceContext          context                   = 0;
-    OptixTraversableHandle      gas_handle                = {};
-    CUdeviceptr                 d_gas_output_buffer       = {};
+
+    OptixTraversableHandle      gas_handle_aabb                = {};
+    CUdeviceptr                 d_gas_output_buffer_aabb       = {};
+    OptixTraversableHandle      gas_handle_triangle            = {};
+    CUdeviceptr                 d_gas_output_buffer_triangle   = {};
+
+    OptixTraversableHandle      ias_handle                     = {};
+    CUdeviceptr                 d_ias_output_buffer            = {};
 
     OptixModule                 geometry_module           = 0;
     OptixModule                 camera_module             = 0;
@@ -368,7 +380,7 @@ void initLaunchParams( WhittedState& state )
     CUDA_CHECK( cudaStreamCreate( &state.stream ) );
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &state.d_params ), sizeof( whitted::LaunchParams ) ) );
 
-    state.params.handle = state.gas_handle;
+    state.params.handle = state.ias_handle;
 }
 
 inline OptixAabb sphere_bound( float3 center, float radius )
@@ -415,7 +427,7 @@ inline OptixAabb cube_bound(float3 min, float3 max)
 static void buildGas(
     const WhittedState &state,
     const OptixAccelBuildOptions &accel_options,
-    const OptixBuildInput &build_inputs,
+    const OptixBuildInput &build_input,
     OptixTraversableHandle &gas_handle,
     CUdeviceptr &d_gas_output_buffer
     )
@@ -427,7 +439,7 @@ static void buildGas(
     OPTIX_CHECK( optixAccelComputeMemoryUsage(
         state.context,
         &accel_options,
-        &build_inputs,
+        &build_input,
         1,
         &gas_buffer_sizes));
 
@@ -452,7 +464,7 @@ static void buildGas(
         state.context,
         0,  // stream
         &accel_options,
-        &build_inputs,
+        &build_input,
         1,
         d_temp_buffer_gas,
         gas_buffer_sizes.tempSizeInBytes,
@@ -480,6 +492,86 @@ static void buildGas(
     {
         d_gas_output_buffer = d_buffer_temp_output_gas_and_compacted_size;
     }
+}
+
+void buildIas(WhittedState &state) {
+    Instance instance = { {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0} };
+
+    const size_t instance_size_in_bytes = sizeof(OptixInstance) * GAS_COUNT; 
+    OptixInstance optix_instances[2]; 
+    memset(optix_instances, 0, instance_size_in_bytes);
+
+    // AABB 
+    optix_instances[0].flags = OPTIX_INSTANCE_FLAG_NONE;
+    optix_instances[0].instanceId = 0;
+    optix_instances[0].sbtOffset = 0; 
+    optix_instances[0].visibilityMask = 1;
+    optix_instances[0].traversableHandle = state.gas_handle_aabb;
+    memcpy(optix_instances[0].transform, instance.transform, sizeof(float) * 12); 
+
+    // My Triangle Mesh 
+    optix_instances[1].flags = OPTIX_INSTANCE_FLAG_NONE;
+    optix_instances[1].instanceId = 1;
+    optix_instances[1].sbtOffset = 8; 
+    optix_instances[1].visibilityMask = 1; 
+    optix_instances[1].traversableHandle = state.gas_handle_triangle;
+    memcpy(optix_instances[1].transform, instance.transform, sizeof(float) * 12); 
+
+    CUdeviceptr d_instances;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_instances), instance_size_in_bytes));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(d_instances),
+        optix_instances,
+        instance_size_in_bytes,
+        cudaMemcpyHostToDevice
+    ));
+
+    OptixBuildInput instance_input = {};
+    instance_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    instance_input.instanceArray.instances = d_instances;
+    instance_input.instanceArray.numInstances = GAS_COUNT;
+
+    OptixAccelBuildOptions accel_options = {};
+    accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
+    accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+
+    OptixAccelBufferSizes ias_buffer_sizes;
+    OPTIX_CHECK(optixAccelComputeMemoryUsage(
+        state.context,
+        &accel_options,
+        &instance_input,
+        1, 
+        &ias_buffer_sizes
+    ));
+
+    CUdeviceptr d_temp_buffer;
+    CUDA_CHECK(cudaMalloc(
+        reinterpret_cast<void**>(&d_temp_buffer),
+        ias_buffer_sizes.tempSizeInBytes
+    ));
+    CUDA_CHECK(cudaMalloc(
+        reinterpret_cast<void**>(&state.d_ias_output_buffer),
+        ias_buffer_sizes.outputSizeInBytes
+    ));
+
+    OPTIX_CHECK(optixAccelBuild(
+        state.context,
+        0, 
+        &accel_options,
+        &instance_input,
+        1, 
+        d_temp_buffer,
+        ias_buffer_sizes.tempSizeInBytes,
+        state.d_ias_output_buffer,
+        ias_buffer_sizes.outputSizeInBytes,
+        &state.ias_handle,
+        nullptr,
+        0     
+    ));
+
+
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_temp_buffer)));
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_instances)));
 }
 
 void createGeometry( WhittedState &state )
@@ -559,8 +651,8 @@ void createGeometry( WhittedState &state )
     const uint32_t sbt_index[] = { 0, 1, 2, 3 };
     CUdeviceptr    d_sbt_index;
 
-    const uint32_t sbt_index_tri[] = { 0 };
-    CUdeviceptr d_sbt_index_tri;
+    //const uint32_t sbt_index_tri[] = { 0 };
+    //CUdeviceptr d_sbt_index_tri;
 
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_sbt_index ), sizeof(sbt_index) ) );
     CUDA_CHECK( cudaMemcpy(
@@ -569,12 +661,12 @@ void createGeometry( WhittedState &state )
         sizeof( sbt_index ),
         cudaMemcpyHostToDevice ) );
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_sbt_index_tri), sizeof(sbt_index_tri)));
-    CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(d_sbt_index_tri),
-        sbt_index_tri,
-        sizeof(sbt_index_tri),
-        cudaMemcpyHostToDevice));
+    //CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_sbt_index_tri), sizeof(sbt_index_tri)));
+    //CUDA_CHECK(cudaMemcpy(
+    //    reinterpret_cast<void*>(d_sbt_index_tri),
+    //    sbt_index_tri,
+    //    sizeof(sbt_index_tri),
+    //    cudaMemcpyHostToDevice));
 
     OptixBuildInput aabb_input = {};
     aabb_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
@@ -599,7 +691,7 @@ void createGeometry( WhittedState &state )
     //triangle_input.triangleArray.preTransform = a;
     triangle_input.triangleArray.flags = triangle_input_flags;
     triangle_input.triangleArray.numSbtRecords = 1;
-    triangle_input.triangleArray.sbtIndexOffsetBuffer = d_sbt_index_tri;
+    triangle_input.triangleArray.sbtIndexOffsetBuffer = NULL;
     triangle_input.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
     //triangle_input.triangleArray.sbtIndexOffsetStrideInBytes = a;
     triangle_input.triangleArray.primitiveIndexOffset = 0;
@@ -617,18 +709,21 @@ void createGeometry( WhittedState &state )
 
     const OptixBuildInput build_inputs[BUILD_INPUT_COUNT] = {aabb_input, triangle_input};
 
-    //buildGas(
-    //    state,
-    //    accel_options,
-    //    build_inputs,
-    //    state.gas_handle,
-    //    state.d_gas_output_buffer);
+    buildGas(
+        state,
+        accel_options,
+        aabb_input,
+        state.gas_handle_aabb,
+        state.d_gas_output_buffer_aabb);
+
     buildGas(
         state,
         accel_options,
         triangle_input,
-        state.gas_handle,
-        state.d_gas_output_buffer);
+        state.gas_handle_triangle,
+        state.d_gas_output_buffer_triangle);
+
+    buildIas(state);
 
     CUDA_CHECK( cudaFree( (void*)d_aabb) );
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>(d_sbt_index) ) );
@@ -1192,12 +1287,12 @@ void createSBT( WhittedState &state )
             state.radiance_cow_prog_group,
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(cow);
-        hitgroup_records[sbt_idx].data.material_data.metal = {
-            { 0.2f, 0.5f, 0.5f },   // Ka
-            { 0.2f, 0.7f, 0.8f },   // Kd
-            { 0.9f, 0.9f, 0.9f },   // Ks
-            { 0.5f, 0.5f, 0.5f },   // Kr
-            64,                     // phong_exp
+        hitgroup_records[sbt_idx].data.material_data.red_velvet = {
+            { 0.8f, 0.2f, 0.2f },   // Ka
+            { 0.8f, 0.2f, 0.3f },   // Kd
+            { 0.1f, 0.1f, 0.1f },   // Ks
+            { 0.0f, 0.0f, 0.0f },   // Kr
+            -1.0f,                     // phong_exp
         };
         sbt_idx++;
 
@@ -1205,7 +1300,7 @@ void createSBT( WhittedState &state )
             state.occlusion_cow_prog_group,
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(cow);
-        //sbt_idx++;
+        sbt_idx++;
 
         CUdeviceptr d_hitgroup_records;
         size_t      sizeof_hitgroup_record = sizeof( HitGroupRecord );
@@ -1376,7 +1471,9 @@ void cleanupState( WhittedState& state )
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.sbt.raygenRecord       ) ) );
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.sbt.missRecordBase     ) ) );
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.sbt.hitgroupRecordBase ) ) );
-    CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.d_gas_output_buffer    ) ) );
+    CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.d_gas_output_buffer_aabb    ) ) );
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(state.d_gas_output_buffer_triangle)));
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(state.d_ias_output_buffer)));
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.params.accum_buffer    ) ) );
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.params.lights.data     ) ) );
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( state.d_params               ) ) );

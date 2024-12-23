@@ -139,6 +139,7 @@ struct MaterialData
         Glass        glass;
         Phong        metal;
         Phong        pink_mirror;
+        Phong        red_velvet;
         CheckerPhong checker;
     };
 };
