@@ -625,7 +625,7 @@ void initLaunchParams( WhittedState& state )
     CUDA_CHECK( cudaMemcpy( reinterpret_cast<void*>( state.params.lights.data ), lights.data(),
                             lights.size() * sizeof( Light ), cudaMemcpyHostToDevice ) );
     //state.params.miss_color = { 0.34f, 0.55f, 0.85f };    // back ground
-    state.params.miss_color = { 0.070588f, 0.098039f, 0.184314f };
+    state.params.miss_color = { 0.070588f, 0.098039f, 0.250980f };
 
     state.params.max_depth = max_trace;
     state.params.scene_epsilon = 1.e-4f;
@@ -987,7 +987,7 @@ void createGeometry( WhittedState &state )
     cudaMemcpy(d_transform_matrix, transform_matrix, sizeof(transform_matrix), cudaMemcpyHostToDevice);
 
     // Assign the transform matrix
-    triangle_input.triangleArray.preTransform = reinterpret_cast<CUdeviceptr>(d_transform_matrix);
+    triangle_input.triangleArray.preTransform = NULL; //reinterpret_cast<CUdeviceptr>(d_transform_matrix);
 
     triangle_input.triangleArray.flags = triangle_input_flags;
     triangle_input.triangleArray.numSbtRecords = 1;
@@ -995,7 +995,7 @@ void createGeometry( WhittedState &state )
     triangle_input.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
     //triangle_input.triangleArray.sbtIndexOffsetStrideInBytes = a;
     triangle_input.triangleArray.primitiveIndexOffset = 0;
-    triangle_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
+    triangle_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;// OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
 
     OptixAccelBuildOptions accel_options_tri = {
         OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
@@ -1817,10 +1817,10 @@ void createSBT( WhittedState &state )
             &hitgroup_records[sbt_idx] ) );
         hitgroup_records[ sbt_idx ].data.geometry_data.setParallelogram( g_floor );
         hitgroup_records[ sbt_idx ].data.material_data.checker = {
-            { 0.8f, 0.3f, 0.15f },      // Kd1
-            { 0.9f, 0.85f, 0.05f },     // Kd2
-            { 0.8f, 0.3f, 0.15f },      // Ka1
-            { 0.9f, 0.85f, 0.05f },     // Ka2
+            { 0.113725f, 0.513725f, 0.290196f },      // Kd1
+            { 0.325490f, 0.419608f, 0.203922f },     // Kd2
+            { 0.113725f, 0.513725f, 0.290196f },      // Ka1
+            { 0.325490f, 0.419608f, 0.203922f },     // Ka2
             { 0.0f, 0.0f, 0.0f },       // Ks1
             { 0.0f, 0.0f, 0.0f },       // Ks2
             { 0.0f, 0.0f, 0.0f },       // Kr1
@@ -1886,7 +1886,7 @@ void createSBT( WhittedState &state )
             { 0.2f, 0.5f, 0.5f },   // Ka
             { 0.2f, 0.7f, 0.8f },   // Kd
             { 0.9f, 0.9f, 0.9f },   // Ks
-            { 0.5f, 0.5f, 0.5f },   // Kr
+            { 0.0f, 0.0f, 0.0f },   // Kr
             64,                     // phong_exp
         };
         sbt_idx++;
