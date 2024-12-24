@@ -296,6 +296,29 @@ extern "C" __global__ void __closesthit__cow_radiance()
     //phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
 }
 
+extern "C" __global__ void __closesthit__wolf_radiance()
+{
+    const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
+    const MaterialData::Phong& phong = sbt_data->material_data.red_velvet;
+
+    const OptixTraversableHandle gas = optixGetGASTraversableHandle();
+    const unsigned int           gasSbtIdx = optixGetSbtGASIndex();
+    const unsigned int           primIdx = optixGetPrimitiveIndex();
+    float3 vertices[3] = {};
+    optixGetTriangleVertexData(
+        gas,
+        primIdx,
+        gasSbtIdx,
+        0,
+        vertices);
+
+    float3 object_normal = cross(vertices[1] - vertices[0], vertices[2] - vertices[0]);
+
+    float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
+    float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
+    phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
+}
+
 extern "C" __global__ void __closesthit__checker_radiance()
 {
     const whitted::HitGroupData*      sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
