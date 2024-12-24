@@ -700,6 +700,51 @@ void createGeometry( WhittedState &state )
                 cudaMemcpyHostToDevice
                 ) );
 
+    // Setup AABB build input
+    uint32_t aabb_input_flags[] = {
+        /* flags for metal sphere */
+        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
+        /* flag for glass sphere */
+        OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL,
+        /* flag for floor */
+        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
+        /* flag for cube */
+        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
+    };
+    /* TODO: This API cannot control flags for different ray type */
+
+    const uint32_t sbt_index[] = { 0, 1, 2, 3, 4 };
+    CUdeviceptr    d_sbt_index;
+
+    CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_sbt_index ), sizeof(sbt_index) ) );
+    CUDA_CHECK( cudaMemcpy(
+        reinterpret_cast<void*>( d_sbt_index ),
+        sbt_index,
+        sizeof( sbt_index ),
+        cudaMemcpyHostToDevice ) );
+
+    OptixBuildInput aabb_input = {};
+    aabb_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+    aabb_input.customPrimitiveArray.aabbBuffers   = &d_aabb;
+    aabb_input.customPrimitiveArray.flags         = aabb_input_flags;
+    aabb_input.customPrimitiveArray.numSbtRecords = OBJ_COUNT;
+    aabb_input.customPrimitiveArray.numPrimitives = OBJ_COUNT;
+    aabb_input.customPrimitiveArray.sbtIndexOffsetBuffer         = d_sbt_index;
+    aabb_input.customPrimitiveArray.sbtIndexOffsetSizeInBytes    = sizeof( uint32_t );
+    aabb_input.customPrimitiveArray.primitiveIndexOffset         = 0;
+
+    OptixAccelBuildOptions accel_options = {
+        OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
+        OPTIX_BUILD_OPERATION_BUILD         // operation
+    };
+
+    buildGas(
+        state,
+        accel_options,
+        aabb_input,
+        state.gas_handle_aabb,
+        state.d_gas_output_buffer_aabb);
+
     // Load triangle polygon model into device memory
     std::vector<Vertex> vertices;
     std::vector<Index> indices;
@@ -711,8 +756,6 @@ void createGeometry( WhittedState &state )
     //memcpy(cow.indices, indices.data(), indices.size() * sizeof(Index));
     cow.vertices = &vertices[0];
     cow.indices = &indices[0];
-
-    std::cout << vertices.size() << "\n";
 
     CUdeviceptr d_tri_vertex, d_tri_index;
 
@@ -733,54 +776,11 @@ void createGeometry( WhittedState &state )
         indices.size() * sizeof(Index),
         cudaMemcpyHostToDevice
     ));
-
     // vector of vertices and indices should be cleared.
 
-    // Setup AABB build input
-    uint32_t aabb_input_flags[] = {
-        /* flags for metal sphere */
-        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
-        /* flag for glass sphere */
-        OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL,
-        /* flag for floor */
-        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
-        /* flag for cube */
-        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
-    };
     uint32_t triangle_input_flags[] = {
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
     };
-    /* TODO: This API cannot control flags for different ray type */
-
-    const uint32_t sbt_index[] = { 0, 1, 2, 3, 4 };
-    CUdeviceptr    d_sbt_index;
-
-    //const uint32_t sbt_index_tri[] = { 0 };
-    //CUdeviceptr d_sbt_index_tri;
-
-    CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_sbt_index ), sizeof(sbt_index) ) );
-    CUDA_CHECK( cudaMemcpy(
-        reinterpret_cast<void*>( d_sbt_index ),
-        sbt_index,
-        sizeof( sbt_index ),
-        cudaMemcpyHostToDevice ) );
-
-    //CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_sbt_index_tri), sizeof(sbt_index_tri)));
-    //CUDA_CHECK(cudaMemcpy(
-    //    reinterpret_cast<void*>(d_sbt_index_tri),
-    //    sbt_index_tri,
-    //    sizeof(sbt_index_tri),
-    //    cudaMemcpyHostToDevice));
-
-    OptixBuildInput aabb_input = {};
-    aabb_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
-    aabb_input.customPrimitiveArray.aabbBuffers   = &d_aabb;
-    aabb_input.customPrimitiveArray.flags         = aabb_input_flags;
-    aabb_input.customPrimitiveArray.numSbtRecords = OBJ_COUNT;
-    aabb_input.customPrimitiveArray.numPrimitives = OBJ_COUNT;
-    aabb_input.customPrimitiveArray.sbtIndexOffsetBuffer         = d_sbt_index;
-    aabb_input.customPrimitiveArray.sbtIndexOffsetSizeInBytes    = sizeof( uint32_t );
-    aabb_input.customPrimitiveArray.primitiveIndexOffset         = 0;
 
     OptixBuildInput triangle_input = {};
     triangle_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
@@ -792,33 +792,32 @@ void createGeometry( WhittedState &state )
     triangle_input.triangleArray.numIndexTriplets = indices.size(); // same as the ret value of optixGetPrimitiveIndex().
     triangle_input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     triangle_input.triangleArray.indexStrideInBytes = 12;
-    //triangle_input.triangleArray.preTransform = a;
+
+    // Translation by -4 along z-axis
+    float transform_matrix[12] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, -4.0f
+    };
+    float* d_transform_matrix;
+    cudaMalloc(reinterpret_cast<void**>(&d_transform_matrix), sizeof(transform_matrix));
+    cudaMemcpy(d_transform_matrix, transform_matrix, sizeof(transform_matrix), cudaMemcpyHostToDevice);
+
+    // Assign the transform matrix
+    triangle_input.triangleArray.preTransform = reinterpret_cast<CUdeviceptr>(d_transform_matrix);
+
     triangle_input.triangleArray.flags = triangle_input_flags;
     triangle_input.triangleArray.numSbtRecords = 1;
     triangle_input.triangleArray.sbtIndexOffsetBuffer = NULL;
     triangle_input.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
     //triangle_input.triangleArray.sbtIndexOffsetStrideInBytes = a;
     triangle_input.triangleArray.primitiveIndexOffset = 0;
-    //triangle_input.triangleArray.transformFormat = a;
+    triangle_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
 
-    OptixAccelBuildOptions accel_options = {
+    OptixAccelBuildOptions accel_options_tri = {
         OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
         OPTIX_BUILD_OPERATION_BUILD         // operation
     };
-
-    OptixAccelBuildOptions accel_options_tri = {
-    OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
-    OPTIX_BUILD_OPERATION_BUILD         // operation
-    };
-
-    const OptixBuildInput build_inputs[BUILD_INPUT_COUNT] = {aabb_input, triangle_input};
-
-    buildGas(
-        state,
-        accel_options,
-        aabb_input,
-        state.gas_handle_aabb,
-        state.d_gas_output_buffer_aabb);
 
     buildGas(
         state,
@@ -831,6 +830,7 @@ void createGeometry( WhittedState &state )
 
     CUDA_CHECK( cudaFree( (void*)d_aabb) );
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>(d_sbt_index) ) );
+    // TODO : device memory free for triangle mesh.
 }
 
 void createModules( WhittedState &state )
