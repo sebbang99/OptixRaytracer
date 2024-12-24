@@ -63,6 +63,8 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
+#include <cstdlib>
+
 const uint32_t OBJ_COUNT = 5;
 // idx 0 : blue sphere
 // idx 1 : sphere shell
@@ -971,7 +973,7 @@ void createGeometry( WhittedState &state )
     // Load AABB into device memory
     std::vector<Vertex> pt_vertices;
 
-    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud_2000.obj", pt_vertices);
+    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud_2000_uniform.obj", pt_vertices);
 
     const uint32_t point_count = pt_vertices.size();
 
@@ -983,9 +985,9 @@ void createGeometry( WhittedState &state )
         float3 center = make_float3(pt_vertices[i].pos[0] * 15.0f, pt_vertices[i].pos[1] * 5.0f + 5.0f, pt_vertices[i].pos[2] * 8.0f);
 
         point_cloud[i].center = center;
-        point_cloud[i].radius = 0.02f;
+        point_cloud[i].radius = 0.015f;
 
-        aabb_pc[i] = sphere_bound(center, 0.02f);
+        aabb_pc[i] = sphere_bound(center, 0.015f);
     }
 
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_aabb_pc
@@ -1802,17 +1804,74 @@ void createSBT( WhittedState &state )
 
         // Point cloud
         for (uint32_t i = 0; i < POINT_CLOUD_COUNT; i++) {
+            // [0, 1]
+            float rand_value = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+
+            MaterialData::Phong snow_material;
+            float r = fmod(rand_value * 1.0f, 1.0f);  // 0.0 ~ 1.0
+            float g = fmod(rand_value * 0.8f + 0.2f, 1.0f); // 0.2 ~ 1.0
+            float b = fmod(rand_value * 0.8f + 0.2f, 1.0f); // 0.2 ~ 1.0
+
+            if (rand_value < 0.2f) {
+                snow_material = {
+                    { r, g, b },          
+                    { r, g, b },           
+                    { 1.0f, 1.0f, 1.0f }, 
+                    { 1.0f, 1.0f, 1.0f },  
+                    1000,                   
+                };
+            }
+            else if (rand_value < 0.4f) {
+                snow_material = {
+                    { r, g, b },         
+                    { r * 0.7f, g * 0.8f, b * 0.6f }, 
+                    { 0.9f, 0.9f, 0.9f }, 
+                    { 0.6f, 0.6f, 0.6f },   
+                    128,                  
+                };
+            }
+            else if (rand_value < 0.6f) {
+                snow_material = {
+                    { r * 0.9f, g * 0.4f, b * 0.1f }, 
+                    { r * 0.8f, g * 0.5f, b * 0.2f }, 
+                    { 1.0f, 1.0f, 1.0f }, 
+                    { 0.5f, 0.5f, 0.5f },  
+                    64,                    
+                };
+            }
+            else if (rand_value < 0.8f) {
+                snow_material = {
+                    { r * 0.6f, g * 0.4f, b * 1.0f },  
+                    { r * 0.5f, g * 0.5f, b * 0.9f },    
+                    { 1.0f, 1.0f, 1.0f },  
+                    { 0.5f, 0.7f, 1.0f },  
+                    128,                  
+                };
+            }
+            else if (rand_value < 0.9f) {
+                snow_material = {
+                    { 1.0f, 0.6f, 0.8f }, 
+                    { 1.0f, 0.4f, 0.6f },   
+                    { 0.9f, 0.9f, 0.9f },  
+                    { 0.8f, 0.6f, 0.6f }, 
+                    64,                  
+                };
+            }
+            else {
+                snow_material = {
+                    { 1.0f, 1.0f, 0.0f },   
+                    { 1.0f, 0.5f, 0.0f },  
+                    { 0.6f, 0.6f, 0.6f },  
+                    { 0.8f, 0.3f, 0.3f }, 
+                    64,                  
+                };
+            }
+
             OPTIX_CHECK(optixSbtRecordPackHeader(
                 state.radiance_point_cloud_prog_group,
                 &hitgroup_records[sbt_idx]));
             hitgroup_records[sbt_idx].data.geometry_data.setSphere(point_cloud[i]);
-            hitgroup_records[sbt_idx].data.material_data.metal = {
-                { 0.2f, 0.5f, 0.5f },   // Ka
-                { 0.2f, 0.7f, 0.8f },   // Kd
-                { 0.9f, 0.9f, 0.9f },   // Ks
-                { 0.5f, 0.5f, 0.5f },   // Kr
-                64,                     // phong_exp
-            };
+            hitgroup_records[sbt_idx].data.material_data.metal = snow_material;
             sbt_idx++;
 
             OPTIX_CHECK(optixSbtRecordPackHeader(
