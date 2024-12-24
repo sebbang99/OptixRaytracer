@@ -79,6 +79,7 @@ bool              minimized     = false;
 bool              camera_changed = true;
 sutil::Camera     camera;
 sutil::Trackball  trackball;
+const float move_speed = 0.1f;
 
 // Mouse state
 int32_t           mouse_button = -1;
@@ -315,17 +316,88 @@ static void windowIconifyCallback( GLFWwindow* window, int32_t iconified )
 
 static void keyCallback( GLFWwindow* window, int32_t key, int32_t /*scancode*/, int32_t action, int32_t /*mods*/ )
 {
-    if( action == GLFW_PRESS )
+    if (action == GLFW_PRESS)
     {
-        if( key == GLFW_KEY_Q ||
-            key == GLFW_KEY_ESCAPE )
+        if (key == GLFW_KEY_ESCAPE)
         {
-            glfwSetWindowShouldClose( window, true );
+            glfwSetWindowShouldClose(window, true);
         }
     }
-    else if( key == GLFW_KEY_G )
+    else if (key == GLFW_KEY_G)
     {
-        // toggle UI draw
+        std::cout << "G key pressed!\n";
+    }
+    else if (key == GLFW_KEY_A)
+    {
+        std::cout << "Left key pressed!\n";
+
+        float3 eye = camera.eye();
+        camera.setEye(make_float3(eye.x - move_speed, eye.y, eye.z));
+
+        float3 lookat = camera.lookat();
+        camera.setLookat(make_float3(lookat.x - move_speed, lookat.y, lookat.z));
+
+        camera_changed = true;
+    }
+    else if (key == GLFW_KEY_D)
+    {
+        std::cout << "Right key pressed!\n";
+
+        float3 eye = camera.eye();
+        camera.setEye(make_float3(eye.x + move_speed, eye.y, eye.z));
+
+        float3 lookat = camera.lookat();
+        camera.setLookat(make_float3(lookat.x + move_speed, lookat.y, lookat.z));
+
+        camera_changed = true;
+    }
+    else if (key == GLFW_KEY_W)
+    {
+        std::cout << "Front key pressed!\n";
+
+        float3 eye = camera.eye();
+        camera.setEye(make_float3(eye.x, eye.y, eye.z - move_speed));
+
+        float3 lookat = camera.lookat();
+        camera.setLookat(make_float3(lookat.x, lookat.y, lookat.z - move_speed));
+
+        camera_changed = true;
+    }
+    else if (key == GLFW_KEY_S)
+    {
+        std::cout << "Back key pressed!\n";
+
+        float3 eye = camera.eye();
+        camera.setEye(make_float3(eye.x, eye.y, eye.z + move_speed));
+
+        float3 lookat = camera.lookat();
+        camera.setLookat(make_float3(lookat.x, lookat.y, lookat.z + move_speed));
+
+        camera_changed = true;
+    }
+    else if (key == GLFW_KEY_E)
+    {
+        std::cout << "Up key pressed!\n";
+
+        float3 eye = camera.eye();
+        camera.setEye(make_float3(eye.x, eye.y + move_speed, eye.z));
+
+        float3 lookat = camera.lookat();
+        camera.setLookat(make_float3(lookat.x, lookat.y + move_speed, lookat.z));
+
+        camera_changed = true;
+    }
+    else if (key == GLFW_KEY_Q)
+    {
+        std::cout << "Down key pressed!\n";
+
+        float3 eye = camera.eye();
+        camera.setEye(make_float3(eye.x, eye.y - move_speed, eye.z));
+
+        float3 lookat = camera.lookat();
+        camera.setLookat(make_float3(lookat.x, lookat.y - move_speed, lookat.z));
+
+        camera_changed = true;
     }
 }
 
@@ -1438,8 +1510,8 @@ void createContext( WhittedState& state )
 
 void initCameraState()
 {
-    camera.setEye( make_float3( 8.0f, 2.0f, -4.0f ) );
-    camera.setLookat( make_float3( 4.0f, 2.3f, -4.0f ) );
+    camera.setEye( make_float3( 8.0f, 2.0f, 4.0f ) );
+    camera.setLookat( make_float3( 8.0f, 2.3f, -4.0f ) );
     camera.setUp( make_float3( 0.0f, 1.0f, 0.0f ) );
     camera.setFovY( 60.0f );
     camera_changed = true;
