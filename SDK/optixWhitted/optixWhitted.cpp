@@ -63,6 +63,17 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
+const uint32_t OBJ_COUNT = 5;
+// idx 0 : blue sphere
+// idx 1 : sphere shell
+// idx 2 : floor
+// idx 3 : cube
+// idx 4 : cylinder
+
+const uint32_t POINT_CLOUD_COUNT = 2000;
+const uint32_t POLYGON_COUNT = 2;
+const uint32_t GAS_COUNT = 1 + POLYGON_COUNT + 1;
+
 //------------------------------------------------------------------------------
 //
 // Globals
@@ -83,6 +94,8 @@ int32_t           mouse_button = -1;
 
 const int         max_trace = 12;
 
+const size_t count_records = whitted::RAY_TYPE_COUNT * (OBJ_COUNT + POLYGON_COUNT + POINT_CLOUD_COUNT);
+
 //------------------------------------------------------------------------------
 //
 // Local types
@@ -90,17 +103,7 @@ const int         max_trace = 12;
 //
 //------------------------------------------------------------------------------
 typedef sutil::Record<whitted::HitGroupData> HitGroupRecord;
-
-const uint32_t OBJ_COUNT = 5;
-// idx 0 : blue sphere
-// idx 1 : sphere shell
-// idx 2 : floor
-// idx 3 : cube
-// idx 4 : cylinder
-
-const uint32_t POINT_CLOUD_COUNT = 1000;
-const uint32_t POLYGON_COUNT = 2;
-const uint32_t GAS_COUNT = 1 + POLYGON_COUNT + 1;
+HitGroupRecord hitgroup_records[count_records];
 
 struct Instance
 {
@@ -508,7 +511,8 @@ void initLaunchParams( WhittedState& state )
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &state.params.lights.data ), lights.size() * sizeof( Light ) ) );
     CUDA_CHECK( cudaMemcpy( reinterpret_cast<void*>( state.params.lights.data ), lights.data(),
                             lights.size() * sizeof( Light ), cudaMemcpyHostToDevice ) );
-    state.params.miss_color = { 0.34f, 0.55f, 0.85f };
+    //state.params.miss_color = { 0.34f, 0.55f, 0.85f };    // back ground
+    state.params.miss_color = { 0.070588f, 0.098039f, 0.184314f };
 
     state.params.max_depth = max_trace;
     state.params.scene_epsilon = 1.e-4f;
@@ -967,7 +971,7 @@ void createGeometry( WhittedState &state )
     // Load AABB into device memory
     std::vector<Vertex> pt_vertices;
 
-    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud.obj", pt_vertices);
+    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud_2000.obj", pt_vertices);
 
     const uint32_t point_count = pt_vertices.size();
 
@@ -976,12 +980,12 @@ void createGeometry( WhittedState &state )
     CUdeviceptr d_aabb_pc;
 
     for (uint32_t i = 0; i < point_count; i++) {
-        float3 center = make_float3(pt_vertices[i].pos[0], pt_vertices[i].pos[1], pt_vertices[i].pos[2]);
+        float3 center = make_float3(pt_vertices[i].pos[0] * 15.0f, pt_vertices[i].pos[1] * 5.0f + 5.0f, pt_vertices[i].pos[2] * 8.0f);
 
         point_cloud[i].center = center;
-        point_cloud[i].radius = 0.1f;
+        point_cloud[i].radius = 0.02f;
 
-        aabb_pc[i] = sphere_bound(center, 0.1f);
+        aabb_pc[i] = sphere_bound(center, 0.02f);
     }
 
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_aabb_pc
@@ -1455,7 +1459,7 @@ static void createPointCloudProgram(WhittedState& state, std::vector<OptixProgra
     radiance_point_cloud_prog_group_desc.hitgroup.moduleIS = state.sphere_module;
     radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__sphere";
     radiance_point_cloud_prog_group_desc.hitgroup.moduleCH = state.shading_module;
-    radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__metal_radiance";
+    radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__point_cloud_radiance";
     radiance_point_cloud_prog_group_desc.hitgroup.moduleAH = nullptr;
     radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
 
@@ -1476,8 +1480,9 @@ static void createPointCloudProgram(WhittedState& state, std::vector<OptixProgra
     occlusion_point_cloud_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
     occlusion_point_cloud_prog_group_desc.hitgroup.moduleIS = state.sphere_module;
     occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__sphere";
-    occlusion_point_cloud_prog_group_desc.hitgroup.moduleCH = state.shading_module;
-    occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__full_occlusion";
+    // shadow is not need for snow effect. 
+    //occlusion_point_cloud_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    //occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__point_cloud_occlusion";
     occlusion_point_cloud_prog_group_desc.hitgroup.moduleAH = nullptr;
     occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
 
@@ -1635,8 +1640,8 @@ void createSBT( WhittedState &state )
 
     // Hitgroup program record
     {
-        const size_t count_records = whitted::RAY_TYPE_COUNT * (OBJ_COUNT + POLYGON_COUNT + POINT_CLOUD_COUNT);
-        HitGroupRecord hitgroup_records[count_records];
+        /*const size_t count_records = whitted::RAY_TYPE_COUNT * (OBJ_COUNT + POLYGON_COUNT + POINT_CLOUD_COUNT);*/
+        /*HitGroupRecord hitgroup_records[count_records];*/
 
         // Note: Fill SBT record array the same order like AS is built.
         int sbt_idx = 0;
