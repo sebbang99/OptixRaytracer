@@ -79,7 +79,8 @@ struct GeometryData
         CATROM_CURVE_ARRAY    = 7,
         AABB = 8,
         MY_TRIANGLE_MESH = 9,
-        UNKNOWN_TYPE = 10
+        CYLINDER = 10,
+        UNKNOWN_TYPE = 11
     };
 
     // The number of supported texture spaces per mesh.
@@ -104,6 +105,13 @@ struct GeometryData
     {
         Vertex *vertices;
         Index *indices;
+    };
+
+    struct Cylinder
+    {
+        float3 center;
+        float radius;
+        float height;
     };
 
     struct Sphere
@@ -184,6 +192,19 @@ struct GeometryData
     {
         assert(type == MY_TRIANGLE_MESH);
         return my_triangle_mesh;
+    }
+
+    void setCylinder(const Cylinder& c)
+    {
+        assert(type == UNKNOWN_TYPE);
+        type = CYLINDER;
+        cylinder = c;
+    }
+
+    SUTIL_HOSTDEVICE const Cylinder& getCylinder() const
+    {
+        assert(type == CYLINDER);
+        return cylinder;
     }
 
     void setTriangleMesh( const TriangleMesh& t )
@@ -309,5 +330,6 @@ struct GeometryData
         Curves        curves;
         AABBs         aabb;
         MyTriangleMesh my_triangle_mesh;
+        Cylinder       cylinder;
     };
 };

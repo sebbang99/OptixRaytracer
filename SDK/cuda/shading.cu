@@ -192,6 +192,19 @@ extern "C" __global__ void __closesthit__cube_radiance()
     phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
 }
 
+extern "C" __global__ void __closesthit__cylinder_radiance()
+{
+    const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
+    const MaterialData::Phong& phong = sbt_data->material_data.pink_mirror;
+
+    float3 object_normal = make_float3(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()),
+        __uint_as_float(optixGetAttribute_2()));
+
+    float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
+    float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
+    phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
+}
+
 extern "C" __global__ void __closesthit__cow_radiance()
 {
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();

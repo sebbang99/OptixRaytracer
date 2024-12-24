@@ -126,6 +126,51 @@ extern "C" __global__ void __intersection__cube()
         optixReportIntersection(t_near, 0, float3_as_args(normal));
 }
 
+extern "C" __global__ void __intersection__cylinder()
+{
+    const whitted::HitGroupData* sbt_data = reinterpret_cast<whitted::HitGroupData*>(optixGetSbtDataPointer());
+    const GeometryData::Cylinder& cylinder = sbt_data->geometry_data.getCylinder();
+
+    const float3 ray_orig = optixGetWorldRayOrigin();
+    const float3 ray_dir = optixGetWorldRayDirection();
+    const float ray_tmin = optixGetRayTmin(), ray_tmax = optixGetRayTmax();
+
+    const float3 center = cylinder.center;
+    const float radius = cylinder.radius;
+    const float height = cylinder.height;
+
+    const float3 moved_orig = ray_orig - center;
+
+    float k2 = 1.0f - ray_dir.y * ray_dir.y;
+    float k1 = dot(moved_orig, ray_dir) - moved_orig.y * ray_dir.y;
+    float k0 = dot(moved_orig, moved_orig) - moved_orig.y * moved_orig.y - radius * radius;
+
+    float h = k1 * k1 - k2 * k0;
+    if (h < 0.0f) return;
+
+    h = sqrtf(h);
+    float t = (-k1 - h) / k2;
+
+    float y;
+    // Check for intersection with cylinder body
+    if (t >= ray_tmin && t <= ray_tmax) {
+        y = moved_orig.y + t * ray_dir.y;
+        if (y > -height && y < height) {
+            float3 normal = (moved_orig + t * ray_dir - make_float3(0.0f, y, 0.0f)) / radius;
+            optixReportIntersection(t, 0, float3_as_args(normal));
+        }
+    }
+
+    // Check for intersection with caps
+    t = (((y < 0.0f) ? -height : height) - moved_orig.y) / ray_dir.y;
+    if (t >= ray_tmin && t <= ray_tmax) {
+        if (abs(k1 + k2 * t) < h) {
+            float3 normal = make_float3(0.0f, (y < 0.0f ? -1.0f : 1.0f), 0.0f);
+            optixReportIntersection(t, 0, float3_as_args(normal));
+        }
+    }
+}
+
 
 extern "C" {
 __constant__ whitted::LaunchParams params;

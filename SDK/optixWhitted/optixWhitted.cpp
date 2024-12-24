@@ -93,11 +93,12 @@ const int         max_trace = 12;
 //------------------------------------------------------------------------------
 typedef sutil::Record<whitted::HitGroupData> HitGroupRecord;
 
-const uint32_t OBJ_COUNT = 4;
+const uint32_t OBJ_COUNT = 5;
 // idx 0 : blue sphere
 // idx 1 : sphere shell
 // idx 2 : floor
 // idx 3 : cube
+// idx 4 : cylinder
 
 struct Instance
 {
@@ -201,6 +202,8 @@ struct WhittedState
     OptixProgramGroup           occlusion_cube_prog_group = 0;
     OptixProgramGroup           radiance_cow_prog_group = 0;
     OptixProgramGroup           occlusion_cow_prog_group = 0;
+    OptixProgramGroup           radiance_cylinder_prog_group = 0;
+    OptixProgramGroup           occlusion_cylinder_prog_group = 0;
     // Sehee added end
 
     OptixPipeline               pipeline                  = 0;
@@ -239,6 +242,11 @@ const GeometryData::AABBs cube = {
     { -6.0f, 6.0f, 4.0f }       // max
 };
 GeometryData::MyTriangleMesh cow;
+GeometryData::Cylinder cylinder = {
+    make_float3(5.0f, 0.0f, 0.0f),  // center
+    0.5f,                           // radius
+    0.5f                            // height
+};
 
 //------------------------------------------------------------------------------
 //
@@ -424,6 +432,17 @@ inline OptixAabb cube_bound(float3 min, float3 max)
     };
 }
 
+inline OptixAabb cylinder_bound(float3 bot_center, float r, float h)
+{
+    float3 m_min = make_float3(bot_center.x - r, bot_center.y - h, bot_center.z - r);
+    float3 m_max = make_float3(bot_center.x + r, bot_center.y + h, bot_center.z + r);
+
+    return {
+    m_min.x, m_min.y, m_min.z,
+    m_max.x, m_max.y, m_max.z
+    };
+}
+
 static void buildGas(
     const WhittedState &state,
     const OptixAccelBuildOptions &accel_options,
@@ -512,7 +531,7 @@ void buildIas(WhittedState &state) {
     // My Triangle Mesh 
     optix_instances[1].flags = OPTIX_INSTANCE_FLAG_NONE;
     optix_instances[1].instanceId = 1;
-    optix_instances[1].sbtOffset = 8; 
+    optix_instances[1].sbtOffset = 10; 
     optix_instances[1].visibilityMask = 1; 
     optix_instances[1].traversableHandle = state.gas_handle_triangle;
     memcpy(optix_instances[1].transform, instance.transform, sizeof(float) * 12); 
@@ -584,7 +603,8 @@ void createGeometry( WhittedState &state )
     OptixAabb   aabb[OBJ_COUNT] = { sphere_bound( g_sphere.center, g_sphere.radius ),
                                   sphere_bound( g_sphere_shell.center, g_sphere_shell.radius2 ),
                                   parallelogram_bound( g_floor.v1, g_floor.v2, g_floor.anchor ),
-                                            cube_bound(cube.min, cube.max) };
+                                            cube_bound(cube.min, cube.max),
+                                            cylinder_bound(cylinder.center, cylinder.radius, cylinder.height)};
     CUdeviceptr d_aabb;
 
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_aabb
@@ -648,7 +668,7 @@ void createGeometry( WhittedState &state )
     };
     /* TODO: This API cannot control flags for different ray type */
 
-    const uint32_t sbt_index[] = { 0, 1, 2, 3 };
+    const uint32_t sbt_index[] = { 0, 1, 2, 3, 4 };
     CUdeviceptr    d_sbt_index;
 
     //const uint32_t sbt_index_tri[] = { 0 };
@@ -999,6 +1019,53 @@ static void createCubeProgram(WhittedState& state, std::vector<OptixProgramGroup
     state.occlusion_cube_prog_group = occlusion_cube_prog_group;
 }
 
+static void createCylinderProgram(WhittedState& state, std::vector<OptixProgramGroup>& program_groups)
+{
+    OptixProgramGroup           radiance_cylinder_prog_group;
+    OptixProgramGroupOptions    radiance_cylinder_prog_group_options = {};
+    OptixProgramGroupDesc       radiance_cylinder_prog_group_desc = {};
+    radiance_cylinder_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    radiance_cylinder_prog_group_desc.hitgroup.moduleIS = state.geometry_module;
+    radiance_cylinder_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__cylinder";
+    radiance_cylinder_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    radiance_cylinder_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__cylinder_radiance";
+    radiance_cylinder_prog_group_desc.hitgroup.moduleAH = nullptr;
+    radiance_cylinder_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &radiance_cylinder_prog_group_desc,
+        1,
+        &radiance_cylinder_prog_group_options,
+        LOG, &LOG_SIZE,
+        &radiance_cylinder_prog_group));
+
+    program_groups.push_back(radiance_cylinder_prog_group);
+    state.radiance_cylinder_prog_group = radiance_cylinder_prog_group;
+
+    OptixProgramGroup           occlusion_cylinder_prog_group;
+    OptixProgramGroupOptions    occlusion_cylinder_prog_group_options = {};
+    OptixProgramGroupDesc       occlusion_cylinder_prog_group_desc = {};
+    occlusion_cylinder_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    occlusion_cylinder_prog_group_desc.hitgroup.moduleIS = state.geometry_module;
+    occlusion_cylinder_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__cylinder";
+    occlusion_cylinder_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    occlusion_cylinder_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__full_occlusion";
+    occlusion_cylinder_prog_group_desc.hitgroup.moduleAH = nullptr;
+    occlusion_cylinder_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &occlusion_cylinder_prog_group_desc,
+        1,
+        &occlusion_cylinder_prog_group_options,
+        LOG, &LOG_SIZE,
+        &occlusion_cylinder_prog_group));
+
+    program_groups.push_back(occlusion_cylinder_prog_group);
+    state.occlusion_cylinder_prog_group = occlusion_cylinder_prog_group;
+}
+
 static void createCowProgram(WhittedState& state, std::vector<OptixProgramGroup>& program_groups)
 {
     OptixProgramGroup           radiance_cow_prog_group;
@@ -1098,6 +1165,7 @@ void createPipeline( WhittedState &state )
     // Sehee added begin
     createCubeProgram(state, program_groups);
     createCowProgram(state, program_groups);
+    createCylinderProgram(state, program_groups);
     // Sehee added end
     createMissProgram( state, program_groups );
 
@@ -1280,6 +1348,26 @@ void createSBT( WhittedState &state )
             state.occlusion_cube_prog_group,
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setAabb(cube);
+        sbt_idx++;
+
+        // Cylinder
+        OPTIX_CHECK(optixSbtRecordPackHeader(
+            state.radiance_cylinder_prog_group,
+            &hitgroup_records[sbt_idx]));
+        hitgroup_records[sbt_idx].data.geometry_data.setCylinder(cylinder);
+        hitgroup_records[sbt_idx].data.material_data.pink_mirror = {
+            { 0.515f, 0.0215f, 0.0215f },   // Ka
+            { 0.61424f, 0.03568f, 0.03568f },   // Kd
+            { 0.633f, 0.727811f, 0.633 },   // Ks
+            { 0.5f, 0.5f, 0.5f },   // Kr
+            76.8f,                     // phong_exp
+        };
+        sbt_idx++;
+
+        OPTIX_CHECK(optixSbtRecordPackHeader(
+            state.occlusion_cylinder_prog_group,
+            &hitgroup_records[sbt_idx]));
+        hitgroup_records[sbt_idx].data.geometry_data.setCylinder(cylinder);
         sbt_idx++;
 
         // Cow
