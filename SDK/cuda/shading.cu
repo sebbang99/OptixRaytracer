@@ -222,6 +222,121 @@ static __device__ void phongShade( float3 p_Kd, float3 p_Ka, float3 p_Ks, float3
     setPayloadRadiance( prd );
 }
 
+static __device__ void phongToonShade(float3 p_Kd, float3 p_Ka, float3 p_Ks, float3 p_Kr, float p_phong_exp, float3 p_normal)
+{
+    const float3 ray_orig = optixGetWorldRayOrigin();
+    const float3 ray_dir = optixGetWorldRayDirection();
+    const float  ray_t = optixGetRayTmax();
+
+    whitted::PayloadRadiance prd = getPayloadRadiance();
+
+    float3 hit_point = ray_orig + ray_t * ray_dir;
+
+    // ambient contribution
+    Light::Ambient ambient_light = params.lights[0].ambient;
+    float3         result = p_Ka * ambient_light.color;
+
+    // compute direct lighting
+    Light::Point point_light = params.lights[1].point;
+    float        Ldist = length(point_light.position - hit_point);
+    float3       L = normalize(point_light.position - hit_point);
+    float        nDl = dot(p_normal, L);
+
+    // cast shadow ray
+    float3 light_attenuation = make_float3(static_cast<float>(nDl > 0.0f));
+    if (nDl > 0.0f)
+    {
+        whitted::PayloadOcclusion shadow_prd;
+        shadow_prd.result = make_float3(1.0f);
+
+        optixTrace(params.handle, hit_point, L, 0.01f, Ldist, 0.0f, OptixVisibilityMask(1), OPTIX_RAY_FLAG_NONE,
+            whitted::RAY_TYPE_OCCLUSION, whitted::RAY_TYPE_COUNT, whitted::RAY_TYPE_OCCLUSION,
+            float3_as_args(shadow_prd.result));
+
+        light_attenuation = shadow_prd.result;
+    }
+
+    // If not completely shadowed, light the hit point
+    if (fmaxf(light_attenuation) > 0.0f)
+    {
+        float3 Lc = ((point_light.color * 4.0f) / 4.0f) * light_attenuation;
+
+        result += p_Kd * nDl * Lc;
+
+        float3 H = normalize(L - ray_dir);
+        float  nDh = dot(p_normal, H);
+        if (nDh > 0)
+        {
+            float power = (pow(nDh, p_phong_exp) > 0.5f ? pow(nDh, p_phong_exp) : 0.0f);
+            result += p_Ks * power * Lc;
+        }
+    }
+
+    if (fmaxf(p_Kr) > 0)
+    {
+
+        // ray tree attenuation
+        float new_importance = prd.importance * luminance(p_Kr);
+        int   new_depth = prd.depth + 1;
+
+        // reflection ray
+        // compare new_depth to max_depth - 1 to leave room for a potential shadow ray trace
+        if (new_importance >= 0.01f && new_depth <= params.max_depth - 1)
+        {
+            float3 R = reflect(ray_dir, p_normal);
+
+            result += p_Kr * traceRadianceRay(hit_point, R, new_depth, new_importance);
+        }
+    }
+
+    // compute spot lighting
+    Light::Spot spot_light = params.lights[2].spot;
+    float spot_Ldist = length(spot_light.position - hit_point);
+    float3 spot_L = normalize(spot_light.position - hit_point);
+    float spot_nDl = dot(p_normal, spot_L);
+
+    float3 spot_result_color = make_float3(0.0f, 0.0f, 0.0f);
+    float spot_factor = dot(-spot_L, spot_light.direction);
+    if (spot_factor > cos(radians(spot_light.cutoff))) {
+        spot_result_color = pow(spot_factor, 2.0f) * make_float3(1.0f, 1.0f, 1.0f);
+
+        float3 spot_light_attenuation = make_float3(static_cast<float>(spot_nDl > 0.0f));
+        if (spot_nDl > 0.0f)
+        {
+            whitted::PayloadOcclusion shadow_prd;
+            shadow_prd.result = make_float3(1.0f);
+
+            optixTrace(params.handle, hit_point, spot_L, 0.01f, spot_Ldist, 0.0f, OptixVisibilityMask(1), OPTIX_RAY_FLAG_NONE,
+                whitted::RAY_TYPE_OCCLUSION, whitted::RAY_TYPE_COUNT, whitted::RAY_TYPE_OCCLUSION,
+                float3_as_args(shadow_prd.result));
+
+            spot_light_attenuation = shadow_prd.result;
+        }
+
+        if (fmaxf(spot_light_attenuation) > 0.0f)
+        {
+            float3 spot_Lc = ((spot_light.color * 4.0f) / 4.0f) * spot_light_attenuation;
+
+            result += p_Kd * spot_nDl * spot_Lc * spot_result_color;
+
+            float3 spot_H = normalize(spot_L - ray_dir);
+            float  spot_nDh = dot(p_normal, spot_H);
+            if (spot_nDh > 0)
+            {
+                float spot_power = (pow(spot_nDh, p_phong_exp) > 0.5f ? pow(spot_nDh, p_phong_exp) : 0.0f);
+                result += p_Ks * spot_power * spot_Lc * spot_result_color;
+            }
+        }
+    }
+
+    // just for debugging
+    //result = make_float3(0.0f, 1.0f, 0.0f);
+
+    // pass the color back
+    prd.result = result;
+    setPayloadRadiance(prd);
+}
+
 static __device__ void phongShadePointCloud(float3 p_Kd, float3 p_Ka, float3 p_Ks, float3 p_Kr, float p_phong_exp, float3 p_normal)
 {
     const float3 ray_orig = optixGetWorldRayOrigin();
@@ -341,7 +456,7 @@ extern "C" __global__ void __closesthit__cow_radiance()
 {
     // ver.1
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
-    const MaterialData::Phong& phong = sbt_data->material_data.red_velvet;
+    const MaterialData::Phong& phong = sbt_data->material_data.metal;
 
     const OptixTraversableHandle gas = optixGetGASTraversableHandle();
     const unsigned int           gasSbtIdx = optixGetSbtGASIndex();
@@ -358,7 +473,7 @@ extern "C" __global__ void __closesthit__cow_radiance()
 
     float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
     float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
-    phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
+    phongToonShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
 
     // ver.2
     //const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
