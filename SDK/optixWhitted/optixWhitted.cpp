@@ -112,6 +112,116 @@ struct Instance
     float transform[12];
 };
 
+void allocateAndCopyBuffer(CUdeviceptr& device_ptr, const void* host_data, size_t byte_size)
+{
+    cudaMalloc(reinterpret_cast<void**>(&device_ptr), byte_size);
+    cudaMemcpy(reinterpret_cast<void*>(device_ptr), host_data, byte_size, cudaMemcpyHostToDevice);
+}
+
+void load_obj_file_to_triangle_mesh(const std::string& filename, GeometryData::TriangleMesh& mesh)
+{
+    tinyobj::ObjReader reader;
+
+    if (!reader.ParseFromFile(filename)) {
+        if (!reader.Error().empty()) {
+            std::cerr << "Error: " << reader.Error() << "\n";
+        }
+        exit(EXIT_FAILURE);
+    }
+
+    if (!reader.Warning().empty()) {
+        std::cout << "Warning: " << reader.Warning() << "\n";
+    }
+
+    const auto& attrib = reader.GetAttrib();
+    const auto& shapes = reader.GetShapes();
+
+    // Prepare temporary host buffers
+    std::vector<uint32_t> indices;
+    std::vector<float3> positions;
+    std::vector<float3> normals;
+    std::vector<float2> texcoords;
+    std::vector<float4> colors; // Placeholder, since .obj doesn't have color data by default
+
+    // Iterate over shapes and faces
+    for (const auto& shape : shapes) {
+        size_t index_offset = 0;
+
+        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+            size_t num_face_vertices = shape.mesh.num_face_vertices[f];
+            if (num_face_vertices != 3) {
+                std::cerr << "Only triangular faces are supported.\n";
+                exit(EXIT_FAILURE);
+            }
+
+            for (size_t v = 0; v < num_face_vertices; ++v) {
+                tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
+
+                // Add index
+                indices.push_back(static_cast<uint32_t>(positions.size()));
+
+                // Add position
+                positions.push_back({
+                    attrib.vertices[3 * idx.vertex_index + 0],
+                    attrib.vertices[3 * idx.vertex_index + 1],
+                    attrib.vertices[3 * idx.vertex_index + 2]
+                    });
+
+                // Add normal
+                if (idx.normal_index >= 0) {
+                    normals.push_back({
+                        attrib.normals[3 * idx.normal_index + 0],
+                        attrib.normals[3 * idx.normal_index + 1],
+                        attrib.normals[3 * idx.normal_index + 2]
+                        });
+                }
+
+                // Add texture coordinate
+                if (idx.texcoord_index >= 0) {
+                    texcoords.push_back({
+                        attrib.texcoords[2 * idx.texcoord_index + 0],
+                        attrib.texcoords[2 * idx.texcoord_index + 1]
+                        });
+                }
+                else {
+                    texcoords.push_back({ 0.0f, 0.0f }); // Default texcoord
+                }
+
+                // Placeholder for color (e.g., white color for all vertices)
+                colors.push_back({ 1.0f, 1.0f, 1.0f, 1.0f });
+            }
+
+            index_offset += num_face_vertices;
+        }
+    }
+
+    // Allocate and copy data to GPU buffers
+    allocateAndCopyBuffer(mesh.indices.data, indices.data(), indices.size() * sizeof(uint32_t));
+    mesh.indices.count = static_cast<unsigned int>(indices.size());
+    mesh.indices.byte_stride = sizeof(uint32_t);
+    mesh.indices.elmt_byte_size = sizeof(uint32_t);
+
+    allocateAndCopyBuffer(mesh.positions.data, positions.data(), positions.size() * sizeof(float3));
+    mesh.positions.count = static_cast<unsigned int>(positions.size());
+    mesh.positions.byte_stride = sizeof(float3);
+    mesh.positions.elmt_byte_size = sizeof(float3);
+
+    allocateAndCopyBuffer(mesh.normals.data, normals.data(), normals.size() * sizeof(float3));
+    mesh.normals.count = static_cast<unsigned int>(normals.size());
+    mesh.normals.byte_stride = sizeof(float3);
+    mesh.normals.elmt_byte_size = sizeof(float3);
+
+    //allocateAndCopyBuffer(mesh.texcoords.data, texcoords.data(), texcoords.size() * sizeof(float2));
+    //mesh.texcoords.count = static_cast<unsigned int>(texcoords.size());
+    //mesh.texcoords.byte_stride = sizeof(float2);
+    //mesh.texcoords.elmt_byte_size = sizeof(float2);
+
+    //allocateAndCopyBuffer(mesh.colors.data, colors.data(), colors.size() * sizeof(float4));
+    //mesh.colors.count = static_cast<unsigned int>(colors.size());
+    //mesh.colors.byte_stride = sizeof(float4);
+    //mesh.colors.elmt_byte_size = sizeof(float4);
+}
+
 void load_obj_file(const std::string& filename, std::vector<Vertex>& vertices, std::vector<Index>& indices) {
     tinyobj::ObjReader reader;
 
@@ -295,7 +405,8 @@ const GeometryData::Cylinder cylinder = {
     0.5f                            // height
 };
 GeometryData::Sphere *point_cloud;
-GeometryData::MyTriangleMesh cow;
+//GeometryData::MyTriangleMesh cow;
+GeometryData::TriangleMesh cow;
 GeometryData::MyTriangleMesh wolf;
 
 //------------------------------------------------------------------------------
@@ -813,38 +924,42 @@ void createGeometry( WhittedState &state )
         state.gas_handle_aabb,
         state.d_gas_output_buffer_aabb);
 
+    // These codes commented below are the version of using MyTriangleMesh geometry type.
     // Load triangle polygon model into device memory
-    std::vector<Vertex> vertices;
-    std::vector<Index> indices;
+    //std::vector<Vertex> vertices;
+    //std::vector<Index> indices;
 
-    load_obj_file("../../../SDK/data/Cow/wuson.obj", vertices, indices);
+    //load_obj_file("../../../SDK/data/Cow/wuson.obj", vertices, indices);
     //cow.vertices = (Vertex *)malloc(vertices.size() * sizeof(Vertex));
     //memcpy(cow.vertices, vertices.data(), vertices.size() * sizeof(Vertex));
     //cow.indices = (Index*)malloc(indices.size() * sizeof(Index));
     //memcpy(cow.indices, indices.data(), indices.size() * sizeof(Index));
-    cow.vertices = &vertices[0];
-    cow.indices = &indices[0];
+    //cow.vertices = &vertices[0];
+    //cow.indices = &indices[0];
 
-    CUdeviceptr d_tri_vertex, d_tri_index;
+    //CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_vertex
+    //    ), vertices.size() * sizeof(Vertex)));
+    //CUDA_CHECK(cudaMemcpy(
+    //    reinterpret_cast<void*>(d_tri_vertex),
+    //    cow.vertices,
+    //    vertices.size() * sizeof(Vertex),
+    //    cudaMemcpyHostToDevice
+    //));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_vertex
-        ), vertices.size() * sizeof(Vertex)));
-    CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(d_tri_vertex),
-        cow.vertices,
-        vertices.size() * sizeof(Vertex),
-        cudaMemcpyHostToDevice
-    ));
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_index
-        ), indices.size() * sizeof(Index)));
-    CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(d_tri_index),
-        cow.indices,
-        indices.size() * sizeof(Index),
-        cudaMemcpyHostToDevice
-    ));
+    //CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_index
+    //    ), indices.size() * sizeof(Index)));
+    //CUDA_CHECK(cudaMemcpy(
+    //    reinterpret_cast<void*>(d_tri_index),
+    //    cow.indices,
+    //    indices.size() * sizeof(Index),
+    //    cudaMemcpyHostToDevice
+    //));
     // vector of vertices and indices should be cleared.
+
+    load_obj_file_to_triangle_mesh("../../../SDK/data/Cow/wuson.obj", cow);
+
+    CUdeviceptr d_tri_vertex = cow.positions.data;
+    CUdeviceptr d_tri_index = cow.indices.data;
 
     uint32_t triangle_input_flags[] = {
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
@@ -853,13 +968,13 @@ void createGeometry( WhittedState &state )
     OptixBuildInput triangle_input = {};
     triangle_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
     triangle_input.triangleArray.vertexBuffers = &d_tri_vertex;
-    triangle_input.triangleArray.numVertices = vertices.size();
+    triangle_input.triangleArray.numVertices = cow.positions.count;
     triangle_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    triangle_input.triangleArray.vertexStrideInBytes = 32;
+    triangle_input.triangleArray.vertexStrideInBytes = sizeof(float3);
     triangle_input.triangleArray.indexBuffer = d_tri_index;
-    triangle_input.triangleArray.numIndexTriplets = indices.size(); // same as the ret value of optixGetPrimitiveIndex().
+    triangle_input.triangleArray.numIndexTriplets = cow.indices.count / 3; // same as the ret value of optixGetPrimitiveIndex().
     triangle_input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    triangle_input.triangleArray.indexStrideInBytes = 12;
+    triangle_input.triangleArray.indexStrideInBytes = sizeof(uint32_t) * 3;
 
     // Translation by -4 along z-axis
     float transform_matrix[12] = {
@@ -1766,7 +1881,7 @@ void createSBT( WhittedState &state )
         OPTIX_CHECK(optixSbtRecordPackHeader(
             state.radiance_cow_prog_group,
             &hitgroup_records[sbt_idx]));
-        hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(cow);
+        hitgroup_records[sbt_idx].data.geometry_data.setTriangleMesh(cow);
         hitgroup_records[sbt_idx].data.material_data.metal = {
             { 0.2f, 0.5f, 0.5f },   // Ka
             { 0.2f, 0.7f, 0.8f },   // Kd
@@ -1779,7 +1894,7 @@ void createSBT( WhittedState &state )
         OPTIX_CHECK(optixSbtRecordPackHeader(
             state.occlusion_cow_prog_group,
             &hitgroup_records[sbt_idx]));
-        hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(cow);
+        hitgroup_records[sbt_idx].data.geometry_data.setTriangleMesh(cow);
         sbt_idx++;
 
         // Wolf
