@@ -98,8 +98,9 @@ const uint32_t OBJ_COUNT = 5;
 // idx 3 : cube
 // idx 4 : cylinder
 
+const uint32_t POINT_CLOUD_COUNT = 1000;
 const uint32_t POLYGON_COUNT = 2;
-const uint32_t GAS_COUNT = 1 + POLYGON_COUNT;
+const uint32_t GAS_COUNT = 1 + POLYGON_COUNT + 1;
 
 struct Instance
 {
@@ -172,6 +173,39 @@ void load_obj_file(const std::string& filename, std::vector<Vertex>& vertices, s
     }
 }
 
+void load_obj_file_for_point_cloud(const std::string& filename, std::vector<Vertex>& vertices) {
+    tinyobj::ObjReader reader;
+
+    if (!reader.ParseFromFile(filename)) {  // call LoadObj() inside here.
+        if (!reader.Error().empty()) {
+            std::cerr << "Error: " << reader.Error() << "\n";
+        }
+        exit(EXIT_FAILURE);
+    }
+
+    if (!reader.Warning().empty()) {
+        std::cout << "Warning: " << reader.Warning() << "\n";
+    }
+
+    const auto& attrib = reader.GetAttrib();
+
+    for (size_t i = 0; i < attrib.vertices.size(); i += 3) {
+        Vertex vertex = {};
+        vertex.pos[0] = attrib.vertices[i + 0];
+        vertex.pos[1] = attrib.vertices[i + 1];
+        vertex.pos[2] = attrib.vertices[i + 2];
+
+        vertex.norm[0] = 0.0f;
+        vertex.norm[1] = 0.0f;
+        vertex.norm[2] = 0.0f;
+
+        vertex.tex[0] = 0.0f;
+        vertex.tex[1] = 0.0f;
+
+        vertices.push_back(vertex);
+    }
+}
+
 struct WhittedState
 {
     OptixDeviceContext          context                   = 0;
@@ -182,6 +216,8 @@ struct WhittedState
     CUdeviceptr                 d_gas_output_buffer_triangle   = {};
     OptixTraversableHandle      gas_handle_triangle_wolf = {};
     CUdeviceptr                 d_gas_output_buffer_triangle_wolf = {};
+    OptixTraversableHandle      gas_handle_aabb_point_cloud = {};
+    CUdeviceptr                 d_gas_output_buffer_aabb_point_cloud = {};
 
     OptixTraversableHandle      ias_handle                     = {};
     CUdeviceptr                 d_ias_output_buffer            = {};
@@ -209,6 +245,8 @@ struct WhittedState
     OptixProgramGroup           occlusion_cow_prog_group = 0;
     OptixProgramGroup           radiance_wolf_prog_group = 0;
     OptixProgramGroup           occlusion_wolf_prog_group = 0;
+    OptixProgramGroup           radiance_point_cloud_prog_group = 0;
+    OptixProgramGroup           occlusion_point_cloud_prog_group = 0;
     // Sehee added end
 
     OptixPipeline               pipeline                  = 0;
@@ -227,7 +265,7 @@ struct WhittedState
 //
 //------------------------------------------------------------------------------
 
-// Metal sphere, glass sphere, floor
+// Metal sphere, glass sphere, floor by default
 const GeometryData::Sphere g_sphere = {
     { 2.0f, 1.5f, -2.5f }, // center
     1.0f                   // radius
@@ -251,6 +289,7 @@ const GeometryData::Cylinder cylinder = {
     0.5f,                           // radius
     0.5f                            // height
 };
+GeometryData::Sphere *point_cloud;
 GeometryData::MyTriangleMesh cow;
 GeometryData::MyTriangleMesh wolf;
 
@@ -633,6 +672,14 @@ void buildIas(WhittedState &state) {
     optix_instances[2].traversableHandle = state.gas_handle_triangle_wolf;
     memcpy(optix_instances[2].transform, instance.transform, sizeof(float) * 12);
 
+    // AABB 
+    optix_instances[3].flags = OPTIX_INSTANCE_FLAG_NONE;
+    optix_instances[3].instanceId = 0;
+    optix_instances[3].sbtOffset = 14;
+    optix_instances[3].visibilityMask = 1;
+    optix_instances[3].traversableHandle = state.gas_handle_aabb_point_cloud;
+    memcpy(optix_instances[3].transform, instance.transform, sizeof(float) * 12);
+
     CUdeviceptr d_instances;
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_instances), instance_size_in_bytes));
     CUDA_CHECK(cudaMemcpy(
@@ -722,6 +769,8 @@ void createGeometry( WhittedState &state )
         /* flag for floor */
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
         /* flag for cube */
+        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
+        /* flag for cylinder */
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
     };
     /* TODO: This API cannot control flags for different ray type */
@@ -844,10 +893,7 @@ void createGeometry( WhittedState &state )
     std::vector<Index> wolf_indices;
 
     load_obj_file("../../../SDK/data/Wolf/LowPolyWolf.obj", wolf_vertices, wolf_indices);
-    //cow.vertices = (Vertex *)malloc(vertices.size() * sizeof(Vertex));
-    //memcpy(cow.vertices, vertices.data(), vertices.size() * sizeof(Vertex));
-    //cow.indices = (Index*)malloc(indices.size() * sizeof(Index));
-    //memcpy(cow.indices, indices.data(), indices.size() * sizeof(Index));
+
     wolf.vertices = &wolf_vertices[0];
     wolf.indices = &wolf_indices[0];
 
@@ -917,6 +963,76 @@ void createGeometry( WhittedState &state )
         triangle_input_wolf,
         state.gas_handle_triangle_wolf,
         state.d_gas_output_buffer_triangle_wolf);
+
+    // Load AABB into device memory
+    std::vector<Vertex> pt_vertices;
+
+    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud.obj", pt_vertices);
+
+    const uint32_t point_count = pt_vertices.size();
+
+    point_cloud = (GeometryData::Sphere*)malloc(point_count * sizeof(GeometryData::Sphere));
+    OptixAabb* aabb_pc = (OptixAabb*)malloc(sizeof(OptixAabb) * point_count);
+    CUdeviceptr d_aabb_pc;
+
+    for (uint32_t i = 0; i < point_count; i++) {
+        float3 center = make_float3(pt_vertices[i].pos[0], pt_vertices[i].pos[1], pt_vertices[i].pos[2]);
+
+        point_cloud[i].center = center;
+        point_cloud[i].radius = 0.1f;
+
+        aabb_pc[i] = sphere_bound(center, 0.1f);
+    }
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_aabb_pc
+        ), point_count * sizeof(OptixAabb)));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(d_aabb_pc),
+        aabb_pc,
+        point_count * sizeof(OptixAabb),
+        cudaMemcpyHostToDevice
+    ));
+
+    // Setup AABB build input
+    uint32_t* aabb_input_flags_pc = (uint32_t*)malloc(sizeof(uint32_t) * point_count);
+    for (uint32_t i = 0; i < point_count; i++)
+        aabb_input_flags_pc[i] = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
+    ///* TODO: This API cannot control flags for different ray type */
+
+    uint32_t* sbt_index_pc = (uint32_t*)malloc(sizeof(uint32_t) * point_count);
+    for (uint32_t i = 0; i < point_count; i++)
+        sbt_index_pc[i] = i;
+
+    CUdeviceptr    d_sbt_index_pc;
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_sbt_index_pc), sizeof(uint32_t) * point_count));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(d_sbt_index_pc),
+        sbt_index_pc,
+        sizeof(uint32_t) * point_count,
+        cudaMemcpyHostToDevice));
+
+    OptixBuildInput aabb_input_pc = {};
+    aabb_input_pc.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+    aabb_input_pc.customPrimitiveArray.aabbBuffers = &d_aabb_pc;
+    aabb_input_pc.customPrimitiveArray.flags = aabb_input_flags_pc;
+    aabb_input_pc.customPrimitiveArray.numSbtRecords = point_count;
+    aabb_input_pc.customPrimitiveArray.numPrimitives = point_count;
+    aabb_input_pc.customPrimitiveArray.sbtIndexOffsetBuffer = d_sbt_index_pc;
+    aabb_input_pc.customPrimitiveArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
+    aabb_input_pc.customPrimitiveArray.primitiveIndexOffset = 0;
+
+    OptixAccelBuildOptions accel_options_pc = {
+        OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
+        OPTIX_BUILD_OPERATION_BUILD         // operation
+    };
+
+    buildGas(
+        state,
+        accel_options_pc,
+        aabb_input_pc,
+        state.gas_handle_aabb_point_cloud,
+        state.d_gas_output_buffer_aabb_point_cloud);
 
     buildIas(state);
 
@@ -1330,6 +1446,53 @@ static void createWolfProgram(WhittedState& state, std::vector<OptixProgramGroup
     state.occlusion_wolf_prog_group = occlusion_wolf_prog_group;
 }
 
+static void createPointCloudProgram(WhittedState& state, std::vector<OptixProgramGroup>& program_groups)
+{
+    OptixProgramGroup           radiance_point_cloud_prog_group;
+    OptixProgramGroupOptions    radiance_point_cloud_prog_group_options = {};
+    OptixProgramGroupDesc       radiance_point_cloud_prog_group_desc = {};
+    radiance_point_cloud_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    radiance_point_cloud_prog_group_desc.hitgroup.moduleIS = state.sphere_module;
+    radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__sphere";
+    radiance_point_cloud_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__metal_radiance";
+    radiance_point_cloud_prog_group_desc.hitgroup.moduleAH = nullptr;
+    radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &radiance_point_cloud_prog_group_desc,
+        1,
+        &radiance_point_cloud_prog_group_options,
+        LOG, &LOG_SIZE,
+        &radiance_point_cloud_prog_group));
+
+    program_groups.push_back(radiance_point_cloud_prog_group);
+    state.radiance_point_cloud_prog_group = radiance_point_cloud_prog_group;
+
+    OptixProgramGroup           occlusion_point_cloud_prog_group;
+    OptixProgramGroupOptions    occlusion_point_cloud_prog_group_options = {};
+    OptixProgramGroupDesc       occlusion_point_cloud_prog_group_desc = {};
+    occlusion_point_cloud_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    occlusion_point_cloud_prog_group_desc.hitgroup.moduleIS = state.sphere_module;
+    occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__sphere";
+    occlusion_point_cloud_prog_group_desc.hitgroup.moduleCH = state.shading_module;
+    occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__full_occlusion";
+    occlusion_point_cloud_prog_group_desc.hitgroup.moduleAH = nullptr;
+    occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
+
+    OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        state.context,
+        &occlusion_point_cloud_prog_group_desc,
+        1,
+        &occlusion_point_cloud_prog_group_options,
+        LOG, &LOG_SIZE,
+        &occlusion_point_cloud_prog_group));
+
+    program_groups.push_back(occlusion_point_cloud_prog_group);
+    state.occlusion_point_cloud_prog_group = occlusion_point_cloud_prog_group;
+}
+
 static void createMissProgram( WhittedState &state, std::vector<OptixProgramGroup> &program_groups )
 {
     OptixProgramGroupOptions    miss_prog_group_options = {};
@@ -1387,6 +1550,7 @@ void createPipeline( WhittedState &state )
     createCylinderProgram(state, program_groups);
     createCowProgram(state, program_groups);
     createWolfProgram(state, program_groups);
+    createPointCloudProgram(state, program_groups);
     // Sehee added end
     createMissProgram( state, program_groups );
 
@@ -1471,7 +1635,7 @@ void createSBT( WhittedState &state )
 
     // Hitgroup program record
     {
-        const size_t count_records = whitted::RAY_TYPE_COUNT * (OBJ_COUNT + POLYGON_COUNT);
+        const size_t count_records = whitted::RAY_TYPE_COUNT * (OBJ_COUNT + POLYGON_COUNT + POINT_CLOUD_COUNT);
         HitGroupRecord hitgroup_records[count_records];
 
         // Note: Fill SBT record array the same order like AS is built.
@@ -1630,6 +1794,28 @@ void createSBT( WhittedState &state )
             &hitgroup_records[sbt_idx]));
         hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(wolf);
         sbt_idx++;
+
+        // Point cloud
+        for (uint32_t i = 0; i < POINT_CLOUD_COUNT; i++) {
+            OPTIX_CHECK(optixSbtRecordPackHeader(
+                state.radiance_point_cloud_prog_group,
+                &hitgroup_records[sbt_idx]));
+            hitgroup_records[sbt_idx].data.geometry_data.setSphere(point_cloud[i]);
+            hitgroup_records[sbt_idx].data.material_data.metal = {
+                { 0.2f, 0.5f, 0.5f },   // Ka
+                { 0.2f, 0.7f, 0.8f },   // Kd
+                { 0.9f, 0.9f, 0.9f },   // Ks
+                { 0.5f, 0.5f, 0.5f },   // Kr
+                64,                     // phong_exp
+            };
+            sbt_idx++;
+
+            OPTIX_CHECK(optixSbtRecordPackHeader(
+                state.occlusion_point_cloud_prog_group,
+                &hitgroup_records[sbt_idx]));
+            hitgroup_records[sbt_idx].data.geometry_data.setSphere(point_cloud[i]);
+            sbt_idx++;
+        }
 
         CUdeviceptr d_hitgroup_records;
         size_t      sizeof_hitgroup_record = sizeof( HitGroupRecord );
