@@ -36,7 +36,10 @@
 #include "whitted.h"
 
 // Sehee added begin
-
+__device__ float radians(float a)
+{
+    return 0.017453292 * a;
+}
 // Sehee added end
 
 extern "C" {
@@ -171,6 +174,46 @@ static __device__ void phongShade( float3 p_Kd, float3 p_Ka, float3 p_Ks, float3
             float3 R = reflect( ray_dir, p_normal );
 
             result += p_Kr * traceRadianceRay( hit_point, R, new_depth, new_importance );
+        }
+    }
+
+    // compute spot lighting
+    Light::Spot spot_light = params.lights[2].spot;
+    float spot_Ldist = length(spot_light.position - hit_point);
+    float3 spot_L = normalize(spot_light.position - hit_point);
+    float spot_nDl = dot(p_normal, spot_L);
+
+    float3 spot_result_color = make_float3(0.0f, 0.0f, 0.0f);
+    float spot_factor = dot(-spot_L, spot_light.direction);
+    if (spot_factor > cos(radians(spot_light.cutoff))) {
+        spot_result_color = pow(spot_factor, 2.0f) * make_float3(1.0f, 1.0f, 1.0f);
+
+        float3 spot_light_attenuation = make_float3(static_cast<float>(spot_nDl > 0.0f));
+        if (spot_nDl > 0.0f)
+        {
+            whitted::PayloadOcclusion shadow_prd;
+            shadow_prd.result = make_float3(1.0f);
+
+            optixTrace(params.handle, hit_point, spot_L, 0.01f, spot_Ldist, 0.0f, OptixVisibilityMask(1), OPTIX_RAY_FLAG_NONE,
+                whitted::RAY_TYPE_OCCLUSION, whitted::RAY_TYPE_COUNT, whitted::RAY_TYPE_OCCLUSION,
+                float3_as_args(shadow_prd.result));
+
+            spot_light_attenuation = shadow_prd.result;
+        }
+
+        if (fmaxf(spot_light_attenuation) > 0.0f)
+        {
+            float3 spot_Lc = spot_light.color * spot_light_attenuation;
+
+            result += p_Kd * spot_nDl * spot_Lc * spot_result_color;
+
+            float3 spot_H = normalize(spot_L - ray_dir);
+            float  spot_nDh = dot(p_normal, spot_H);
+            if (spot_nDh > 0)
+            {
+                float spot_power = pow(spot_nDh, p_phong_exp);
+                result += p_Ks * spot_power * spot_Lc * spot_result_color;
+            }
         }
     }
 

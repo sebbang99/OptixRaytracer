@@ -45,8 +45,9 @@ struct Light
 
     enum class Type : int
     {
-        POINT   = 0,
-        AMBIENT = 1
+        POINT = 0,
+        AMBIENT = 1,
+        SPOT = 2
     };
 
     struct Point
@@ -63,6 +64,15 @@ struct Light
         float3   color      CONST_STATIC_INIT( {1.0f, 1.0f, 1.0f} );
     };
 
+    struct Spot
+    {
+        float3   color      CONST_STATIC_INIT({ 1.0f, 1.0f, 1.0f });
+        float    intensity  CONST_STATIC_INIT(1.0f);
+        float3   position   CONST_STATIC_INIT({});
+        Falloff  falloff    CONST_STATIC_INIT(Falloff::QUADRATIC);
+        float3   direction  CONST_STATIC_INIT({});
+        float    cutoff     CONST_STATIC_INIT({});
+    };
 
     Type  type;
 
@@ -70,5 +80,6 @@ struct Light
     {
         Point   point;
         Ambient ambient;
+        Spot spot;
     };
 };

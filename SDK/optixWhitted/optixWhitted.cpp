@@ -439,14 +439,26 @@ void initLaunchParams( WhittedState& state )
     state.params.subframe_index = 0u;
 
     // Set ambient light color and point light position
-    std::vector<Light> lights( 2 );
+    std::vector<Light> lights( 3 );
+    // ambient
     lights[0].type            = Light::Type::AMBIENT;
-    lights[0].ambient.color   = make_float3( 0.4f, 0.4f, 0.4f );
+    lights[0].ambient.color   = make_float3( 0.1f, 0.1f, 0.1f );
+
+    // point
     lights[1].type            = Light::Type::POINT;
     lights[1].point.color     = make_float3( 1.0f, 1.0f, 1.0f );
     lights[1].point.intensity = 1.0f;
     lights[1].point.position  = make_float3( 60.0f, 40.0f, 0.0f );
     lights[1].point.falloff   = Light::Falloff::QUADRATIC;
+
+    // spot
+    lights[2].type = Light::Type::SPOT;
+    lights[2].spot.color = make_float3(1.0f, 0.0f, 0.0f);
+    lights[2].spot.intensity = 1.0f;
+    lights[2].spot.position = make_float3(0.0f, 10.0f, 0.0f);
+    lights[2].spot.falloff = Light::Falloff::QUADRATIC;
+    lights[2].spot.direction = make_float3(0.0f, -1.0f, 0.0f);
+    lights[2].spot.cutoff = 10.0f;
 
     state.params.lights.count = static_cast<unsigned int>( lights.size() );
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &state.params.lights.data ), lights.size() * sizeof( Light ) ) );
@@ -1510,8 +1522,8 @@ void createContext( WhittedState& state )
 
 void initCameraState()
 {
-    camera.setEye( make_float3( 8.0f, 2.0f, 4.0f ) );
-    camera.setLookat( make_float3( 8.0f, 2.3f, -4.0f ) );
+    camera.setEye( make_float3( 2.0f, 3.0f, 6.0f ) );
+    camera.setLookat( make_float3( 2.0f, 2.0f, -4.0f ) );
     camera.setUp( make_float3( 0.0f, 1.0f, 0.0f ) );
     camera.setFovY( 60.0f );
     camera_changed = true;
