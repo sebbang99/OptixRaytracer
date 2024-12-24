@@ -259,16 +259,24 @@ static __device__ void phongToonShade(float3 p_Kd, float3 p_Ka, float3 p_Ks, flo
     // If not completely shadowed, light the hit point
     if (fmaxf(light_attenuation) > 0.0f)
     {
-        float3 Lc = ((point_light.color * 4.0f) / 4.0f) * light_attenuation;
+        float toon_diffuse = fmaxf(0.0f, fminf(1.0f, nDl));
+        toon_diffuse = (toon_diffuse < 0.5f ? 0.3f : 1.0f);
 
-        result += p_Kd * nDl * Lc;
+        float3 Lc = point_light.color * light_attenuation;
+
+        result += p_Kd * toon_diffuse * Lc;
 
         float3 H = normalize(L - ray_dir);
         float  nDh = dot(p_normal, H);
         if (nDh > 0)
         {
-            float power = (pow(nDh, p_phong_exp) > 0.5f ? pow(nDh, p_phong_exp) : 0.0f);
-            result += p_Ks * power * Lc;
+            float power = pow(nDh, p_phong_exp);
+            float toon_specular = (power > 0.5f ? 1.0f : 0.0f);
+
+            // strange rim lighting ...
+            //float rim_value = 1.0f - dot(ray_dir, p_normal);
+            //float3 rim_dot = make_float3(rim_value, rim_value, rim_value);
+            result += p_Ks * (toon_specular * Lc/* + rim_dot * 0.1f*/);
         }
     }
 
@@ -315,16 +323,20 @@ static __device__ void phongToonShade(float3 p_Kd, float3 p_Ka, float3 p_Ks, flo
 
         if (fmaxf(spot_light_attenuation) > 0.0f)
         {
-            float3 spot_Lc = ((spot_light.color * 4.0f) / 4.0f) * spot_light_attenuation;
+            float toon_spot_diffuse = fmaxf(0.0f, fminf(1.0f, nDl));
+            toon_spot_diffuse = (toon_spot_diffuse < 0.5f ? 0.3f : 1.0f);
 
-            result += p_Kd * spot_nDl * spot_Lc * spot_result_color;
+            float3 spot_Lc = spot_light.color * spot_light_attenuation;
+
+            result += p_Kd * toon_spot_diffuse * spot_Lc * spot_result_color;
 
             float3 spot_H = normalize(spot_L - ray_dir);
             float  spot_nDh = dot(p_normal, spot_H);
             if (spot_nDh > 0)
             {
-                float spot_power = (pow(spot_nDh, p_phong_exp) > 0.5f ? pow(spot_nDh, p_phong_exp) : 0.0f);
-                result += p_Ks * spot_power * spot_Lc * spot_result_color;
+                float spot_power = pow(spot_nDh, p_phong_exp);
+                float toon_specular = (spot_power > 0.5f ? 1.0f : 0.0f);
+                result += p_Ks * toon_specular * spot_Lc * spot_result_color;
             }
         }
     }
@@ -499,7 +511,7 @@ extern "C" __global__ void __closesthit__cow_radiance()
 
     float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
     float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
-    phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
+    phongToonShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
 }
 
 extern "C" __global__ void __closesthit__wolf_radiance()
