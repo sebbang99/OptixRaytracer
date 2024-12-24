@@ -207,6 +207,7 @@ extern "C" __global__ void __closesthit__cylinder_radiance()
 
 extern "C" __global__ void __closesthit__cow_radiance()
 {
+    // ver.1
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
     const MaterialData::Phong& phong = sbt_data->material_data.red_velvet;
 
@@ -227,7 +228,29 @@ extern "C" __global__ void __closesthit__cow_radiance()
     float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
     phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
 
+    // ver.2
+    //const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
+    //const MaterialData::Phong& phong = sbt_data->material_data.red_velvet;
+    //const GeometryData::MyTriangleMesh& cow = sbt_data->geometry_data.getMyTriangleMesh();
+
+    ////float2 barycentrics = make_float2(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()));
     //float2 barycentrics = optixGetTriangleBarycentrics();
+
+    //const unsigned int primitiveIndex = optixGetPrimitiveIndex() * 3;
+    //const unsigned int i0 = cow.d_indices[primitiveIndex];
+    //const unsigned int i1 = sbt_data->geometry_data.getMyTriangleMesh().indices[primitiveIndex + 1].v2;
+    //const unsigned int i2 = sbt_data->geometry_data.getMyTriangleMesh().indices[primitiveIndex + 2].v3;
+
+    //const float3 n0 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[i0].norm);
+    //const float3 n1 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[i1].norm);
+    //const float3 n2 = make_float_3(sbt_data->geometry_data.getMyTriangleMesh().vertices[i2].norm);
+
+    //float3 object_normal = (1.0f - barycentrics.x - barycentrics.y) * n0 + barycentrics.x * n1
+    //    + barycentrics.y * n2;
+
+    //float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
+    //float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
+    //phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
 }
 
 extern "C" __global__ void __closesthit__checker_radiance()

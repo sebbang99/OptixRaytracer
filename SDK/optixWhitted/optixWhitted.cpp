@@ -243,7 +243,7 @@ const GeometryData::AABBs cube = {
 };
 GeometryData::MyTriangleMesh cow;
 GeometryData::Cylinder cylinder = {
-    make_float3(5.0f, 0.0f, 0.0f),  // center
+    make_float3(5.0f, 0.5f, 0.0f),  // center
     0.5f,                           // radius
     0.5f                            // height
 };
@@ -432,10 +432,10 @@ inline OptixAabb cube_bound(float3 min, float3 max)
     };
 }
 
-inline OptixAabb cylinder_bound(float3 bot_center, float r, float h)
+inline OptixAabb cylinder_bound(float3 center, float r, float h)
 {
-    float3 m_min = make_float3(bot_center.x - r, bot_center.y - h, bot_center.z - r);
-    float3 m_max = make_float3(bot_center.x + r, bot_center.y + h, bot_center.z + r);
+    float3 m_min = make_float3(center.x - r, center.y - h, center.z - r);
+    float3 m_max = make_float3(center.x + r, center.y + h, center.z + r);
 
     return {
     m_min.x, m_min.y, m_min.z,
