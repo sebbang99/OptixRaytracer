@@ -35,6 +35,8 @@
 #include "helpers.h"
 #include "whitted.h"
 
+#define TOON_SHADING 1
+
 // Sehee added begin
 __device__ float radians(float a)
 {
@@ -464,7 +466,7 @@ extern "C" __global__ void __closesthit__cylinder_radiance()
     phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
 }
 
-extern "C" __global__ void __closesthit__cow_radiance()
+extern "C" __global__ void __closesthit__mesh_radiance()
 {
     // ver.1 (MyTriangleMesh)
     //const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
@@ -511,30 +513,11 @@ extern "C" __global__ void __closesthit__cow_radiance()
 
     float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
     float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
+#if TOON_SHADING
     phongToonShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
-}
-
-extern "C" __global__ void __closesthit__wolf_radiance()
-{
-    const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
-    const MaterialData::Phong& phong = sbt_data->material_data.red_velvet;
-
-    const OptixTraversableHandle gas = optixGetGASTraversableHandle();
-    const unsigned int           gasSbtIdx = optixGetSbtGASIndex();
-    const unsigned int           primIdx = optixGetPrimitiveIndex();
-    float3 vertices[3] = {};
-    optixGetTriangleVertexData(
-        gas,
-        primIdx,
-        gasSbtIdx,
-        0,
-        vertices);
-
-    float3 object_normal = cross(vertices[1] - vertices[0], vertices[2] - vertices[0]);
-
-    float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
-    float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
+#else
     phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
+#endif
 }
 
 extern "C" __global__ void __closesthit__checker_radiance()

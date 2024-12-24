@@ -401,13 +401,14 @@ const GeometryData::AABBs cube = {
 };
 const GeometryData::Cylinder cylinder = {
     make_float3(5.0f, 0.5f, 0.0f),  // center
-    0.5f,                           // radius
+    2.0f,                           // radius
     0.5f                            // height
 };
 GeometryData::Sphere *point_cloud;
 //GeometryData::MyTriangleMesh cow;
+//GeometryData::MyTriangleMesh wolf;
 GeometryData::TriangleMesh cow;
-GeometryData::MyTriangleMesh wolf;
+GeometryData::TriangleMesh wolf;
 
 //------------------------------------------------------------------------------
 //
@@ -606,7 +607,7 @@ void initLaunchParams( WhittedState& state )
 
     // point
     lights[1].type            = Light::Type::POINT;
-    lights[1].point.color     = make_float3( 1.0f, 1.0f, 1.0f );
+    lights[1].point.color     = make_float3( 0.5f, 0.5f, 0.5f );
     lights[1].point.intensity = 1.0f;
     lights[1].point.position  = make_float3( 60.0f, 40.0f, 0.0f );
     lights[1].point.falloff   = Light::Falloff::QUADRATIC;
@@ -925,7 +926,7 @@ void createGeometry( WhittedState &state )
         state.d_gas_output_buffer_aabb);
 
     // These codes commented below are the version of using MyTriangleMesh geometry type.
-    // Load triangle polygon model into device memory
+    // Load triangle polygon model into device memory [cow]
     //std::vector<Vertex> vertices;
     //std::vector<Index> indices;
 
@@ -1009,35 +1010,11 @@ void createGeometry( WhittedState &state )
         state.gas_handle_triangle,
         state.d_gas_output_buffer_triangle);
 
-    // Load triangle polygon model into device memory
-    std::vector<Vertex> wolf_vertices;
-    std::vector<Index> wolf_indices;
+    // Load triangle polygon model into device memory [wolf]
+    load_obj_file_to_triangle_mesh("../../../SDK/data/Wolf/LowPolyWolf.obj", wolf);
 
-    load_obj_file("../../../SDK/data/Wolf/LowPolyWolf.obj", wolf_vertices, wolf_indices);
-
-    wolf.vertices = &wolf_vertices[0];
-    wolf.indices = &wolf_indices[0];
-
-    CUdeviceptr d_tri_vertex_wolf, d_tri_index_wolf;
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_vertex_wolf
-        ), wolf_vertices.size() * sizeof(Vertex)));
-    CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(d_tri_vertex_wolf),
-        wolf.vertices,
-        wolf_vertices.size() * sizeof(Vertex),
-        cudaMemcpyHostToDevice
-    ));
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tri_index_wolf
-        ), wolf_indices.size() * sizeof(Index)));
-    CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(d_tri_index_wolf),
-        wolf.indices,
-        wolf_indices.size() * sizeof(Index),
-        cudaMemcpyHostToDevice
-    ));
-    // vector of vertices and indices should be cleared.
+    CUdeviceptr d_tri_vertex_wolf = wolf.positions.data;
+    CUdeviceptr d_tri_index_wolf = wolf.indices.data;
 
     uint32_t triangle_input_flags_wolf[] = {
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
@@ -1046,24 +1023,24 @@ void createGeometry( WhittedState &state )
     OptixBuildInput triangle_input_wolf = {};
     triangle_input_wolf.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
     triangle_input_wolf.triangleArray.vertexBuffers = &d_tri_vertex_wolf;
-    triangle_input_wolf.triangleArray.numVertices = wolf_vertices.size();
+    triangle_input_wolf.triangleArray.numVertices = wolf.positions.count;
     triangle_input_wolf.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    triangle_input_wolf.triangleArray.vertexStrideInBytes = 32;
+    triangle_input_wolf.triangleArray.vertexStrideInBytes = sizeof(float3);
     triangle_input_wolf.triangleArray.indexBuffer = d_tri_index_wolf;
-    triangle_input_wolf.triangleArray.numIndexTriplets = wolf_indices.size(); // same as the ret value of optixGetPrimitiveIndex().
+    triangle_input_wolf.triangleArray.numIndexTriplets = wolf.indices.count / 3; // same as the ret value of optixGetPrimitiveIndex().
     triangle_input_wolf.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     triangle_input_wolf.triangleArray.indexStrideInBytes = 12;
     triangle_input_wolf.triangleArray.flags = triangle_input_flags_wolf;
     triangle_input_wolf.triangleArray.numSbtRecords = 1;
     triangle_input_wolf.triangleArray.sbtIndexOffsetBuffer = NULL;
-    triangle_input_wolf.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
+    triangle_input_wolf.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t) * 3;
     //triangle_input.triangleArray.sbtIndexOffsetStrideInBytes = a;
     triangle_input_wolf.triangleArray.primitiveIndexOffset = 0;
     triangle_input_wolf.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
 
     float transform_matrix_wolf[12] = {
-        2.5f, 0.0f, 0.0f, -2.0f,
-        0.0f, 2.5f, 0.0f, 0.0f,
+        2.5f, 0.0f, 0.0f, 5.0f,
+        0.0f, 2.5f, 0.0f, 1.0f,
         0.0f, 0.0f, 2.5f, 0.0f
     };
     float* d_transform_matrix_wolf;
@@ -1487,7 +1464,7 @@ static void createCowProgram(WhittedState& state, std::vector<OptixProgramGroup>
     radiance_cow_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
     // No .moduleIS because it has has built-in intersection shader.
     radiance_cow_prog_group_desc.hitgroup.moduleCH = state.shading_module;
-    radiance_cow_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__cow_radiance";
+    radiance_cow_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__mesh_radiance";
     radiance_cow_prog_group_desc.hitgroup.moduleAH = nullptr;
     radiance_cow_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
 
@@ -1531,7 +1508,7 @@ static void createWolfProgram(WhittedState& state, std::vector<OptixProgramGroup
     radiance_wolf_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
     // No .moduleIS because it has has built-in intersection shader.
     radiance_wolf_prog_group_desc.hitgroup.moduleCH = state.shading_module;
-    radiance_wolf_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__wolf_radiance";
+    radiance_wolf_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__mesh_radiance";
     radiance_wolf_prog_group_desc.hitgroup.moduleAH = nullptr;
     radiance_wolf_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
 
@@ -1901,7 +1878,7 @@ void createSBT( WhittedState &state )
         OPTIX_CHECK(optixSbtRecordPackHeader(
             state.radiance_wolf_prog_group,
             &hitgroup_records[sbt_idx]));
-        hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(wolf);
+        hitgroup_records[sbt_idx].data.geometry_data.setTriangleMesh(wolf);
         hitgroup_records[sbt_idx].data.material_data.red_velvet = {
             { 0.1745f, 0.01175f, 0.01175f },   // Ka
             { 0.61424f, 0.34136f, 0.44136f },   // Kd
@@ -1914,7 +1891,7 @@ void createSBT( WhittedState &state )
         OPTIX_CHECK(optixSbtRecordPackHeader(
             state.occlusion_wolf_prog_group,
             &hitgroup_records[sbt_idx]));
-        hitgroup_records[sbt_idx].data.geometry_data.setMyTriangleMesh(wolf);
+        hitgroup_records[sbt_idx].data.geometry_data.setTriangleMesh(wolf);
         sbt_idx++;
 
         // Point cloud
