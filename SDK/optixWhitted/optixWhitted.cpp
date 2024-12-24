@@ -222,6 +222,7 @@ void load_obj_file_to_triangle_mesh(const std::string& filename, GeometryData::T
     //mesh.colors.elmt_byte_size = sizeof(float4);
 }
 
+// for MyTriangleMesh
 void load_obj_file(const std::string& filename, std::vector<Vertex>& vertices, std::vector<Index>& indices) {
     tinyobj::ObjReader reader;
 
@@ -766,7 +767,7 @@ void buildIas(WhittedState &state) {
     OptixInstance optix_instances[GAS_COUNT];
     memset(optix_instances, 0, instance_size_in_bytes);
 
-    // AABB 
+    // AABB (sphere, shell, floor, cube, cylinder)
     optix_instances[0].flags = OPTIX_INSTANCE_FLAG_NONE;
     optix_instances[0].instanceId = 0;
     optix_instances[0].sbtOffset = 0; 
@@ -774,7 +775,7 @@ void buildIas(WhittedState &state) {
     optix_instances[0].traversableHandle = state.gas_handle_aabb;
     memcpy(optix_instances[0].transform, instance.transform, sizeof(float) * 12); 
 
-    // My Triangle Mesh 
+    // My Triangle Mesh (cow)
     optix_instances[1].flags = OPTIX_INSTANCE_FLAG_NONE;
     optix_instances[1].instanceId = 1;
     optix_instances[1].sbtOffset = 10; 
@@ -782,7 +783,7 @@ void buildIas(WhittedState &state) {
     optix_instances[1].traversableHandle = state.gas_handle_triangle;
     memcpy(optix_instances[1].transform, instance.transform, sizeof(float) * 12); 
 
-    // My Triangle Mesh 
+    // My Triangle Mesh (wolf)
     optix_instances[2].flags = OPTIX_INSTANCE_FLAG_NONE;
     optix_instances[2].instanceId = 1;
     optix_instances[2].sbtOffset = 12;
@@ -790,7 +791,7 @@ void buildIas(WhittedState &state) {
     optix_instances[2].traversableHandle = state.gas_handle_triangle_wolf;
     memcpy(optix_instances[2].transform, instance.transform, sizeof(float) * 12);
 
-    // AABB 
+    // AABB (point cloud)
     optix_instances[3].flags = OPTIX_INSTANCE_FLAG_NONE;
     optix_instances[3].instanceId = 0;
     optix_instances[3].sbtOffset = 14;
@@ -962,7 +963,7 @@ void createGeometry( WhittedState &state )
     CUdeviceptr d_tri_vertex = cow.positions.data;
     CUdeviceptr d_tri_index = cow.indices.data;
 
-    uint32_t triangle_input_flags[] = {
+    uint32_t common_input_flag[] = {
         OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
     };
 
@@ -990,7 +991,7 @@ void createGeometry( WhittedState &state )
     // Assign the transform matrix
     triangle_input.triangleArray.preTransform = NULL; //reinterpret_cast<CUdeviceptr>(d_transform_matrix);
 
-    triangle_input.triangleArray.flags = triangle_input_flags;
+    triangle_input.triangleArray.flags = common_input_flag;
     triangle_input.triangleArray.numSbtRecords = 1;
     triangle_input.triangleArray.sbtIndexOffsetBuffer = NULL;
     triangle_input.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
@@ -998,14 +999,9 @@ void createGeometry( WhittedState &state )
     triangle_input.triangleArray.primitiveIndexOffset = 0;
     triangle_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;// OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
 
-    OptixAccelBuildOptions accel_options_tri = {
-        OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
-        OPTIX_BUILD_OPERATION_BUILD         // operation
-    };
-
     buildGas(
         state,
-        accel_options_tri,
+        accel_options,
         triangle_input,
         state.gas_handle_triangle,
         state.d_gas_output_buffer_triangle);
@@ -1015,10 +1011,6 @@ void createGeometry( WhittedState &state )
 
     CUdeviceptr d_tri_vertex_wolf = wolf.positions.data;
     CUdeviceptr d_tri_index_wolf = wolf.indices.data;
-
-    uint32_t triangle_input_flags_wolf[] = {
-        OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
-    };
 
     OptixBuildInput triangle_input_wolf = {};
     triangle_input_wolf.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
@@ -1030,7 +1022,7 @@ void createGeometry( WhittedState &state )
     triangle_input_wolf.triangleArray.numIndexTriplets = wolf.indices.count / 3; // same as the ret value of optixGetPrimitiveIndex().
     triangle_input_wolf.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     triangle_input_wolf.triangleArray.indexStrideInBytes = 12;
-    triangle_input_wolf.triangleArray.flags = triangle_input_flags_wolf;
+    triangle_input_wolf.triangleArray.flags = common_input_flag;
     triangle_input_wolf.triangleArray.numSbtRecords = 1;
     triangle_input_wolf.triangleArray.sbtIndexOffsetBuffer = NULL;
     triangle_input_wolf.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t) * 3;
@@ -1050,14 +1042,9 @@ void createGeometry( WhittedState &state )
     // Assign the transform matrix
     triangle_input_wolf.triangleArray.preTransform = reinterpret_cast<CUdeviceptr>(d_transform_matrix_wolf);
 
-    OptixAccelBuildOptions accel_options_tri_wolf = {
-        OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
-        OPTIX_BUILD_OPERATION_BUILD         // operation
-    };
-
     buildGas(
         state,
-        accel_options_tri_wolf,
+        accel_options,
         triangle_input_wolf,
         state.gas_handle_triangle_wolf,
         state.d_gas_output_buffer_triangle_wolf);
@@ -1120,14 +1107,9 @@ void createGeometry( WhittedState &state )
     aabb_input_pc.customPrimitiveArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
     aabb_input_pc.customPrimitiveArray.primitiveIndexOffset = 0;
 
-    OptixAccelBuildOptions accel_options_pc = {
-        OPTIX_BUILD_FLAG_ALLOW_COMPACTION,  // buildFlags
-        OPTIX_BUILD_OPERATION_BUILD         // operation
-    };
-
     buildGas(
         state,
-        accel_options_pc,
+        accel_options,
         aabb_input_pc,
         state.gas_handle_aabb_point_cloud,
         state.d_gas_output_buffer_aabb_point_cloud);
@@ -1371,7 +1353,7 @@ static void createCubeProgram(WhittedState& state, std::vector<OptixProgramGroup
     radiance_cube_prog_group_desc.hitgroup.moduleIS = state.geometry_module;
     radiance_cube_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__cube";
     radiance_cube_prog_group_desc.hitgroup.moduleCH = state.shading_module;
-    radiance_cube_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__cube_radiance";
+    radiance_cube_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__aabb_radiance";
     radiance_cube_prog_group_desc.hitgroup.moduleAH = nullptr;
     radiance_cube_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
 
@@ -1418,7 +1400,7 @@ static void createCylinderProgram(WhittedState& state, std::vector<OptixProgramG
     radiance_cylinder_prog_group_desc.hitgroup.moduleIS = state.geometry_module;
     radiance_cylinder_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__cylinder";
     radiance_cylinder_prog_group_desc.hitgroup.moduleCH = state.shading_module;
-    radiance_cylinder_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__cylinder_radiance";
+    radiance_cylinder_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__aabb_radiance";
     radiance_cylinder_prog_group_desc.hitgroup.moduleAH = nullptr;
     radiance_cylinder_prog_group_desc.hitgroup.entryFunctionNameAH = nullptr;
 

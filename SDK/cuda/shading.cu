@@ -440,20 +440,7 @@ static __device__ void phongShadePointCloud(float3 p_Kd, float3 p_Ka, float3 p_K
     setPayloadRadiance(prd);
 }
 
-extern "C" __global__ void __closesthit__cube_radiance()
-{
-    const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
-    const MaterialData::Phong& phong = sbt_data->material_data.pink_mirror;
-
-    float3 object_normal = make_float3(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()),
-        __uint_as_float(optixGetAttribute_2()));
-
-    float3 world_normal = normalize(optixTransformNormalFromObjectToWorldSpace(object_normal));
-    float3 ffnormal = faceforward(world_normal, -optixGetWorldRayDirection(), world_normal);
-    phongShade(phong.Kd, phong.Ka, phong.Ks, phong.Kr, phong.phong_exp, ffnormal);
-}
-
-extern "C" __global__ void __closesthit__cylinder_radiance()
+extern "C" __global__ void __closesthit__aabb_radiance()
 {
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
     const MaterialData::Phong& phong = sbt_data->material_data.pink_mirror;
@@ -492,19 +479,19 @@ extern "C" __global__ void __closesthit__mesh_radiance()
     // ver.2 (TriangleMesh)
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
     const MaterialData::Phong& phong = sbt_data->material_data.red_velvet;
-    const GeometryData::TriangleMesh& cow = sbt_data->geometry_data.getTriangleMesh();
+    const GeometryData::TriangleMesh& mesh = sbt_data->geometry_data.getTriangleMesh();
 
     //float2 barycentrics = make_float2(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()));
     float2 barycentrics = optixGetTriangleBarycentrics();
 
     const unsigned int primitiveIndex = optixGetPrimitiveIndex() * 3;
 
-    const unsigned int* index_buffer = reinterpret_cast<const unsigned int*>(cow.indices.data);
+    const unsigned int* index_buffer = reinterpret_cast<const unsigned int*>(mesh.indices.data);
     unsigned int i0 = index_buffer[primitiveIndex];
     unsigned int i1 = index_buffer[primitiveIndex + 1];
     unsigned int i2 = index_buffer[primitiveIndex + 2];
 
-    const float3* normal_buffer = reinterpret_cast<const float3*>(cow.normals.data);
+    const float3* normal_buffer = reinterpret_cast<const float3*>(mesh.normals.data);
     float3 n0 = normal_buffer[i0];
     float3 n1 = normal_buffer[i1];
     float3 n2 = normal_buffer[i2];
