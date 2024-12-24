@@ -485,55 +485,55 @@ static void keyCallback( GLFWwindow* window, int32_t key, int32_t /*scancode*/, 
             glfwSetWindowShouldClose(window, true);
         }
     }
+    else if (key == GLFW_KEY_P) {
+        float3 eye = camera.eye();
+        std::cout << "*** Current camera position : (" << eye.x << ", " << eye.y << ", " << eye.z << ")\n";
+        float3 lookat = camera.lookat();
+        std::cout << "*** Current center position : (" << lookat.x << ", " << lookat.y << ", " << lookat.z << ")\n";
+    }
     else if (key == GLFW_KEY_G)
     {
         std::cout << "G key pressed!\n";
     }
-    else if (key == GLFW_KEY_A)
-    {
-        std::cout << "Left key pressed!\n";
-
-        float3 eye = camera.eye();
-        camera.setEye(make_float3(eye.x - move_speed, eye.y, eye.z));
-
-        float3 lookat = camera.lookat();
-        camera.setLookat(make_float3(lookat.x - move_speed, lookat.y, lookat.z));
-
-        camera_changed = true;
-    }
-    else if (key == GLFW_KEY_D)
-    {
-        std::cout << "Right key pressed!\n";
-
-        float3 eye = camera.eye();
-        camera.setEye(make_float3(eye.x + move_speed, eye.y, eye.z));
-
-        float3 lookat = camera.lookat();
-        camera.setLookat(make_float3(lookat.x + move_speed, lookat.y, lookat.z));
-
-        camera_changed = true;
-    }
     else if (key == GLFW_KEY_W)
     {
-        std::cout << "Front key pressed!\n";
-
         float3 eye = camera.eye();
-        camera.setEye(make_float3(eye.x, eye.y, eye.z - move_speed));
-
         float3 lookat = camera.lookat();
-        camera.setLookat(make_float3(lookat.x, lookat.y, lookat.z - move_speed));
+        float3 W = normalize(lookat - eye);
+        camera.setEye(eye + W * move_speed);
+        camera.setLookat(lookat + W * move_speed);
+
+        camera_changed = true;
+    }
+    else if (key == GLFW_KEY_A)
+    {
+        float3 eye = camera.eye();
+        float3 lookat = camera.lookat();
+        float3 W = normalize(lookat - eye);
+        float3 U = normalize(cross(W, make_float3(0.0f, 1.0f, 0.0f)));
+        camera.setEye(eye - U * move_speed);
+        camera.setLookat(lookat - U * move_speed);
 
         camera_changed = true;
     }
     else if (key == GLFW_KEY_S)
     {
-        std::cout << "Back key pressed!\n";
-
         float3 eye = camera.eye();
-        camera.setEye(make_float3(eye.x, eye.y, eye.z + move_speed));
-
         float3 lookat = camera.lookat();
-        camera.setLookat(make_float3(lookat.x, lookat.y, lookat.z + move_speed));
+        float3 W = normalize(lookat - eye);
+        camera.setEye(eye - W * move_speed);
+        camera.setLookat(lookat - W * move_speed);
+
+        camera_changed = true;
+    }
+    else if (key == GLFW_KEY_D)
+    {
+        float3 eye = camera.eye();
+        float3 lookat = camera.lookat();
+        float3 W = normalize(lookat - eye);
+        float3 U = normalize(cross(W, make_float3(0.0f, 1.0f, 0.0f)));
+        camera.setEye(eye + U * move_speed);
+        camera.setLookat(lookat + U * move_speed);
 
         camera_changed = true;
     }
@@ -601,7 +601,7 @@ void initLaunchParams( WhittedState& state )
     state.params.subframe_index = 0u;
 
     // Set ambient light color and point light position
-    std::vector<Light> lights( 3 );
+    std::vector<Light> lights( 4 );
     // ambient
     lights[0].type            = Light::Type::AMBIENT;
     lights[0].ambient.color   = make_float3( 0.1f, 0.1f, 0.1f );
@@ -617,10 +617,18 @@ void initLaunchParams( WhittedState& state )
     lights[2].type = Light::Type::SPOT;
     lights[2].spot.color = make_float3(1.0f, 0.0f, 0.0f);
     lights[2].spot.intensity = 1.0f;
-    lights[2].spot.position = make_float3(0.0f, 10.0f, 0.0f);
+    lights[2].spot.position = make_float3(-9.0f, 10.0f, 1.0f);
     lights[2].spot.falloff = Light::Falloff::QUADRATIC;
     lights[2].spot.direction = make_float3(0.0f, -1.0f, 0.0f);
-    lights[2].spot.cutoff = 10.0f;
+    lights[2].spot.cutoff = 30.0f;
+
+    lights[3].type = Light::Type::SPOT;
+    lights[3].spot.color = make_float3(1.0f, 1.0f, 1.0f);
+    lights[3].spot.intensity = 1.0f;
+    lights[3].spot.position = make_float3(4.0f, 4.0f, 0.0f);
+    lights[3].spot.falloff = Light::Falloff::QUADRATIC;
+    lights[3].spot.direction = make_float3(-1.0f, -1.0f, 0.0f);
+    lights[3].spot.cutoff = 1.0f;
 
     state.params.lights.count = static_cast<unsigned int>( lights.size() );
     CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &state.params.lights.data ), lights.size() * sizeof( Light ) ) );
@@ -980,16 +988,16 @@ void createGeometry( WhittedState &state )
 
     // Translation by -4 along z-axis
     float transform_matrix[12] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, -4.0f
+        1.0f, 0.0f, 0.0f, -9.0f,
+        0.0f, 1.0f, 0.0f, 6.0f,
+        0.0f, 0.0f, 1.0f, 1.0f
     };
     float* d_transform_matrix;
     cudaMalloc(reinterpret_cast<void**>(&d_transform_matrix), sizeof(transform_matrix));
     cudaMemcpy(d_transform_matrix, transform_matrix, sizeof(transform_matrix), cudaMemcpyHostToDevice);
 
     // Assign the transform matrix
-    triangle_input.triangleArray.preTransform = NULL; //reinterpret_cast<CUdeviceptr>(d_transform_matrix);
+    triangle_input.triangleArray.preTransform = reinterpret_cast<CUdeviceptr>(d_transform_matrix);
 
     triangle_input.triangleArray.flags = common_input_flag;
     triangle_input.triangleArray.numSbtRecords = 1;
@@ -997,7 +1005,7 @@ void createGeometry( WhittedState &state )
     triangle_input.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
     //triangle_input.triangleArray.sbtIndexOffsetStrideInBytes = a;
     triangle_input.triangleArray.primitiveIndexOffset = 0;
-    triangle_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;// OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
+    triangle_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
 
     buildGas(
         state,
@@ -1776,9 +1784,9 @@ void createSBT( WhittedState &state )
             &hitgroup_records[sbt_idx] ) );
         hitgroup_records[ sbt_idx ].data.geometry_data.setParallelogram( g_floor );
         hitgroup_records[ sbt_idx ].data.material_data.checker = {
-            { 0.113725f, 0.513725f, 0.290196f },      // Kd1
+            { 0.172549f, 0.294118f, 0.203922f },      // Kd1
             { 0.325490f, 0.419608f, 0.203922f },     // Kd2
-            { 0.113725f, 0.513725f, 0.290196f },      // Ka1
+            { 0.172549f, 0.294118f, 0.203922f },      // Ka1
             { 0.325490f, 0.419608f, 0.203922f },     // Ka2
             { 0.0f, 0.0f, 0.0f },       // Ks1
             { 0.0f, 0.0f, 0.0f },       // Ks2
@@ -2003,8 +2011,8 @@ void createContext( WhittedState& state )
 
 void initCameraState()
 {
-    camera.setEye( make_float3( 2.0f, 3.0f, 6.0f ) );
-    camera.setLookat( make_float3( 2.0f, 2.0f, -4.0f ) );
+    camera.setEye( make_float3(6.37364, 7.81653, 9.76937));
+    camera.setLookat( make_float3(-3.5, 1.4, -2.4));
     camera.setUp( make_float3( 0.0f, 1.0f, 0.0f ) );
     camera.setFovY( 60.0f );
     camera_changed = true;

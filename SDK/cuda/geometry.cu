@@ -142,6 +142,7 @@ extern "C" __global__ void __intersection__cylinder()
     const float3 moved_orig = ray_orig - center;
 
     float k2 = 1.0f - ray_dir.y * ray_dir.y;
+    if (fabs(k2) < 1e-6f) return;
     float k1 = dot(moved_orig, ray_dir) - moved_orig.y * ray_dir.y;
     float k0 = dot(moved_orig, moved_orig) - moved_orig.y * moved_orig.y - radius * radius;
 
