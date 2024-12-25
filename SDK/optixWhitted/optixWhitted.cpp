@@ -72,7 +72,7 @@ const uint32_t OBJ_COUNT = 5;
 // idx 3 : cube
 // idx 4 : cylinder
 
-const uint32_t POINT_CLOUD_COUNT = 300;
+const uint32_t POINT_CLOUD_COUNT = 1000;
 const uint32_t POLYGON_COUNT = 2;
 const uint32_t GAS_COUNT = 1 + POLYGON_COUNT + 1;
 
@@ -802,7 +802,7 @@ void buildIas(WhittedState &state) {
     optix_instances[2].traversableHandle = state.gas_handle_triangle_wolf;
     memcpy(optix_instances[2].transform, instance.transform, sizeof(float) * 12);
 
-    // AABB (point cloud)
+    // Sphere (point cloud)
     optix_instances[3].flags = OPTIX_INSTANCE_FLAG_NONE;
     optix_instances[3].instanceId = 0;
     optix_instances[3].sbtOffset = 14;
@@ -1063,7 +1063,7 @@ void createGeometry( WhittedState &state )
     // Load AABB into device memory
     std::vector<Vertex> pt_vertices;
 
-    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud_300_uniform.obj", pt_vertices);
+    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud_1000_uniform.obj", pt_vertices);
 
     const uint32_t point_count = pt_vertices.size();
 
