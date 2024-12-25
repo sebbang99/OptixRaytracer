@@ -413,37 +413,6 @@ static __device__ void phongShadePointCloud(float3 p_Kd, float3 p_Ka, float3 p_K
         }
     }
 
-    // compute spot lighting
-    for (uint32_t i = 0; i < spot_light_cnt; i++) {
-        Light::Spot spot_light = params.lights[spot_light_begin + i].spot;
-        float spot_Ldist = length(spot_light.position - hit_point);
-        float3 spot_L = normalize(spot_light.position - hit_point);
-        float spot_nDl = dot(p_normal, spot_L);
-
-        float3 spot_result_color = make_float3(0.0f, 0.0f, 0.0f);
-        float spot_factor = dot(-spot_L, spot_light.direction);
-        if (spot_factor > cos(radians(spot_light.cutoff))) {
-            spot_result_color = pow(spot_factor, 2.0f) * make_float3(1.0f, 1.0f, 1.0f);
-
-            float3 spot_light_attenuation = make_float3(static_cast<float>(spot_nDl > 0.0f));
-
-            if (fmaxf(spot_light_attenuation) > 0.0f)
-            {
-                float3 spot_Lc = spot_light.color * spot_light_attenuation;
-
-                result += p_Kd * spot_nDl * spot_Lc * spot_result_color;
-
-                float3 spot_H = normalize(spot_L - ray_dir);
-                float  spot_nDh = dot(p_normal, spot_H);
-                if (spot_nDh > 0)
-                {
-                    float spot_power = pow(spot_nDh, p_phong_exp);
-                    result += p_Ks * spot_power * spot_Lc * spot_result_color;
-                }
-            }
-        }
-    }
-
     // pass the color back
     prd.result = result;
     setPayloadRadiance(prd);
@@ -572,6 +541,12 @@ extern "C" __global__ void __closesthit__point_cloud_radiance()
 {
     const whitted::HitGroupData* sbt_data = (whitted::HitGroupData*)optixGetSbtDataPointer();
     const MaterialData::Phong& phong = sbt_data->material_data.metal;
+
+    // just for debugging
+    //whitted::PayloadRadiance prd = getPayloadRadiance();
+    //prd.result = phong.Kd;
+    //setPayloadRadiance(prd);
+    //return;
 
     float3 object_normal = make_float3(__uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()),
         __uint_as_float(optixGetAttribute_2()));

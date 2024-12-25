@@ -141,33 +141,52 @@ extern "C" __global__ void __intersection__cylinder()
 
     const float3 moved_orig = ray_orig - center;
 
+    float t_body = INFINITY; 
+    float t_cap = INFINITY;  
+
+    // Compute coefficients for body intersection
     float k2 = 1.0f - ray_dir.y * ray_dir.y;
-    if (fabs(k2) < 1e-6f) return;
-    float k1 = dot(moved_orig, ray_dir) - moved_orig.y * ray_dir.y;
-    float k0 = dot(moved_orig, moved_orig) - moved_orig.y * moved_orig.y - radius * radius;
+    if (fabs(k2) > 1e-6f) {
+        float k1 = dot(moved_orig, ray_dir) - moved_orig.y * ray_dir.y;
+        float k0 = dot(moved_orig, moved_orig) - moved_orig.y * moved_orig.y - radius * radius;
 
-    float h = k1 * k1 - k2 * k0;
-    if (h < 0.0f) return;
+        float h = k1 * k1 - k2 * k0;
+        if (h >= 0.0f) {
+            h = sqrtf(h);
+            float t_candidate = (-k1 - h) / k2;
 
-    h = sqrtf(h);
-    float t = (-k1 - h) / k2;
-
-    float y;
-    // Check for intersection with cylinder body
-    if (t >= ray_tmin && t <= ray_tmax) {
-        y = moved_orig.y + t * ray_dir.y;
-        if (y > -height && y < height) {
-            float3 normal = (moved_orig + t * ray_dir - make_float3(0.0f, y, 0.0f)) / radius;
-            optixReportIntersection(t, 0, float3_as_args(normal));
+            // Check if intersection is within height range
+            float y = moved_orig.y + t_candidate * ray_dir.y;
+            if (t_candidate >= ray_tmin && t_candidate <= ray_tmax && y > -height && y < height) {
+                t_body = t_candidate;
+            }
         }
     }
 
-    // Check for intersection with caps
-    t = (((y < 0.0f) ? -height : height) - moved_orig.y) / ray_dir.y;
-    if (t >= ray_tmin && t <= ray_tmax) {
-        if (abs(k1 + k2 * t) < h) {
-            float3 normal = make_float3(0.0f, (y < 0.0f ? -1.0f : 1.0f), 0.0f);
-            optixReportIntersection(t, 0, float3_as_args(normal));
+    // Check for cap intersections
+    for (float cap_y : {-height, height}) {
+        float t_candidate = (cap_y - moved_orig.y) / ray_dir.y;
+        if (t_candidate >= ray_tmin && t_candidate <= ray_tmax) {
+            float3 hit_point = moved_orig + t_candidate * ray_dir;
+            if (dot(make_float2(hit_point.x, hit_point.z), make_float2(hit_point.x, hit_point.z)) <= radius * radius) { // Check if within cap radius
+                t_cap = fminf(t_cap, t_candidate); // Select closer cap intersection
+            }
+        }
+    }
+
+    // Determine which intersection is closer
+    float t_min = fminf(t_body, t_cap);
+
+    if (t_min < INFINITY) {
+        if (t_min == t_body) {
+            // Report body intersection
+            float3 normal = (moved_orig + t_body * ray_dir - make_float3(0.0f, moved_orig.y + t_body * ray_dir.y, 0.0f)) / radius;
+            optixReportIntersection(t_body, 0, float3_as_args(normal));
+        }
+        else {
+            // Report cap intersection
+            float3 normal = make_float3(0.0f, (t_cap == height ? 1.0f : -1.0f), 0.0f);
+            optixReportIntersection(t_cap, 0, float3_as_args(normal));
         }
     }
 }

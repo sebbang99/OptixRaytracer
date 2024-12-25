@@ -72,7 +72,7 @@ const uint32_t OBJ_COUNT = 5;
 // idx 3 : cube
 // idx 4 : cylinder
 
-const uint32_t POINT_CLOUD_COUNT = 2000;
+const uint32_t POINT_CLOUD_COUNT = 300;
 const uint32_t POLYGON_COUNT = 2;
 const uint32_t GAS_COUNT = 1 + POLYGON_COUNT + 1;
 
@@ -332,8 +332,8 @@ struct WhittedState
     CUdeviceptr                 d_gas_output_buffer_triangle   = {};
     OptixTraversableHandle      gas_handle_triangle_wolf = {};
     CUdeviceptr                 d_gas_output_buffer_triangle_wolf = {};
-    OptixTraversableHandle      gas_handle_aabb_point_cloud = {};
-    CUdeviceptr                 d_gas_output_buffer_aabb_point_cloud = {};
+    OptixTraversableHandle      gas_handle_point_cloud = {};
+    CUdeviceptr                 d_gas_output_buffer_point_cloud = {};
 
     OptixTraversableHandle      ias_handle                     = {};
     CUdeviceptr                 d_ias_output_buffer            = {};
@@ -342,6 +342,7 @@ struct WhittedState
     OptixModule                 camera_module             = 0;
     OptixModule                 shading_module            = 0;
     OptixModule                 sphere_module             = 0;
+    OptixModule                 builtin_module = 0;
 
     OptixProgramGroup           raygen_prog_group         = 0;
     OptixProgramGroup           radiance_miss_prog_group  = 0;
@@ -406,6 +407,8 @@ const GeometryData::Cylinder cylinder = {
     0.5f                            // height
 };
 GeometryData::Sphere *point_cloud;
+float3 *vertex;
+float *radius;
 //GeometryData::MyTriangleMesh cow;
 //GeometryData::MyTriangleMesh wolf;
 GeometryData::TriangleMesh cow;
@@ -804,7 +807,7 @@ void buildIas(WhittedState &state) {
     optix_instances[3].instanceId = 0;
     optix_instances[3].sbtOffset = 14;
     optix_instances[3].visibilityMask = 1;
-    optix_instances[3].traversableHandle = state.gas_handle_aabb_point_cloud;
+    optix_instances[3].traversableHandle = state.gas_handle_point_cloud;
     memcpy(optix_instances[3].transform, instance.transform, sizeof(float) * 12);
 
     CUdeviceptr d_instances;
@@ -1060,37 +1063,44 @@ void createGeometry( WhittedState &state )
     // Load AABB into device memory
     std::vector<Vertex> pt_vertices;
 
-    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud_2000_uniform.obj", pt_vertices);
+    load_obj_file_for_point_cloud("../../../SDK/data/Cloud/Cloud_300_uniform.obj", pt_vertices);
 
     const uint32_t point_count = pt_vertices.size();
 
+    // Allocate and initialize the sphere data
     point_cloud = (GeometryData::Sphere*)malloc(point_count * sizeof(GeometryData::Sphere));
-    OptixAabb* aabb_pc = (OptixAabb*)malloc(sizeof(OptixAabb) * point_count);
-    CUdeviceptr d_aabb_pc;
+    vertex = (float3*)malloc(point_count * sizeof(float3));
+    CUdeviceptr d_sphere_data;
+    radius = (float*)malloc(point_count * sizeof(float));
+    CUdeviceptr d_radius_buffer;
 
     for (uint32_t i = 0; i < point_count; i++) {
         float3 center = make_float3(pt_vertices[i].pos[0] * 15.0f, pt_vertices[i].pos[1] * 5.0f + 5.0f, pt_vertices[i].pos[2] * 8.0f);
+        //float3 center = make_float3(pt_vertices[i].pos[0], pt_vertices[i].pos[1], pt_vertices[i].pos[2]);
 
         point_cloud[i].center = center;
         point_cloud[i].radius = 0.015f;
 
-        aabb_pc[i] = sphere_bound(center, 0.015f);
+        vertex[i] = center;
+        radius[i] = 0.015f;
     }
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_aabb_pc
-        ), point_count * sizeof(OptixAabb)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_sphere_data), point_count * sizeof(float3)));
     CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(d_aabb_pc),
-        aabb_pc,
-        point_count * sizeof(OptixAabb),
+        reinterpret_cast<void*>(d_sphere_data),
+        vertex,
+        point_count * sizeof(float3),
         cudaMemcpyHostToDevice
     ));
 
-    // Setup AABB build input
-    uint32_t* aabb_input_flags_pc = (uint32_t*)malloc(sizeof(uint32_t) * point_count);
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_radius_buffer), point_count * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_radius_buffer), radius, point_count * sizeof(float),
+        cudaMemcpyHostToDevice));
+
+    // Setup flags for the spheres
+    uint32_t* sphere_input_flags = (uint32_t*)malloc(sizeof(uint32_t) * point_count);
     for (uint32_t i = 0; i < point_count; i++)
-        aabb_input_flags_pc[i] = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
-    ///* TODO: This API cannot control flags for different ray type */
+        sphere_input_flags[i] = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
 
     uint32_t* sbt_index_pc = (uint32_t*)malloc(sizeof(uint32_t) * point_count);
     for (uint32_t i = 0; i < point_count; i++)
@@ -1105,22 +1115,27 @@ void createGeometry( WhittedState &state )
         sizeof(uint32_t) * point_count,
         cudaMemcpyHostToDevice));
 
-    OptixBuildInput aabb_input_pc = {};
-    aabb_input_pc.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
-    aabb_input_pc.customPrimitiveArray.aabbBuffers = &d_aabb_pc;
-    aabb_input_pc.customPrimitiveArray.flags = aabb_input_flags_pc;
-    aabb_input_pc.customPrimitiveArray.numSbtRecords = point_count;
-    aabb_input_pc.customPrimitiveArray.numPrimitives = point_count;
-    aabb_input_pc.customPrimitiveArray.sbtIndexOffsetBuffer = d_sbt_index_pc;
-    aabb_input_pc.customPrimitiveArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
-    aabb_input_pc.customPrimitiveArray.primitiveIndexOffset = 0;
+    // Setup the build input for spheres
+    OptixBuildInput sphere_input = {};
+    sphere_input.type = OPTIX_BUILD_INPUT_TYPE_SPHERES;
+    sphere_input.sphereArray.vertexBuffers = &d_sphere_data;
+    sphere_input.sphereArray.numVertices = point_count;
+    sphere_input.sphereArray.vertexStrideInBytes = sizeof(float3);
+    sphere_input.sphereArray.radiusBuffers = &d_radius_buffer;
+    sphere_input.sphereArray.radiusStrideInBytes = sizeof(float);
+    sphere_input.sphereArray.singleRadius = 1;
+    sphere_input.sphereArray.flags = sphere_input_flags;
+    sphere_input.sphereArray.numSbtRecords = point_count;
+    sphere_input.sphereArray.sbtIndexOffsetBuffer = d_sbt_index_pc;
+    sphere_input.sphereArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
+    sphere_input.sphereArray.primitiveIndexOffset = 0;
 
     buildGas(
         state,
         accel_options,
-        aabb_input_pc,
-        state.gas_handle_aabb_point_cloud,
-        state.d_gas_output_buffer_aabb_point_cloud);
+        sphere_input,
+        state.gas_handle_point_cloud,
+        state.d_gas_output_buffer_point_cloud);
 
     buildIas(state);
 
@@ -1136,6 +1151,14 @@ void createModules( WhittedState &state )
     module_compile_options.optLevel   = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
     module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
 #endif
+    {
+        OptixModuleCompileOptions defaultOptions = {};
+        defaultOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
+        defaultOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
+        OptixBuiltinISOptions builtinISOptions = {};
+        builtinISOptions.builtinISModuleType = OPTIX_PRIMITIVE_TYPE_SPHERE;
+        OPTIX_CHECK_LOG(optixBuiltinISModuleGet(state.context, &defaultOptions, &state.pipeline_compile_options, &builtinISOptions, &state.builtin_module));
+    }
 
     {
         size_t      inputSize = 0;
@@ -1540,8 +1563,9 @@ static void createPointCloudProgram(WhittedState& state, std::vector<OptixProgra
     OptixProgramGroupOptions    radiance_point_cloud_prog_group_options = {};
     OptixProgramGroupDesc       radiance_point_cloud_prog_group_desc = {};
     radiance_point_cloud_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-    radiance_point_cloud_prog_group_desc.hitgroup.moduleIS = state.sphere_module;
-    radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__sphere";
+    radiance_point_cloud_prog_group_desc.hitgroup.moduleIS = state.builtin_module;
+    radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = NULL;
+
     radiance_point_cloud_prog_group_desc.hitgroup.moduleCH = state.shading_module;
     radiance_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__point_cloud_radiance";
     radiance_point_cloud_prog_group_desc.hitgroup.moduleAH = nullptr;
@@ -1562,8 +1586,8 @@ static void createPointCloudProgram(WhittedState& state, std::vector<OptixProgra
     OptixProgramGroupOptions    occlusion_point_cloud_prog_group_options = {};
     OptixProgramGroupDesc       occlusion_point_cloud_prog_group_desc = {};
     occlusion_point_cloud_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-    occlusion_point_cloud_prog_group_desc.hitgroup.moduleIS = state.sphere_module;
-    occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = "__intersection__sphere";
+    occlusion_point_cloud_prog_group_desc.hitgroup.moduleIS = state.builtin_module;
+    occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameIS = NULL;// "__intersection__sphere";
     // shadow is not need for snow effect. 
     //occlusion_point_cloud_prog_group_desc.hitgroup.moduleCH = state.shading_module;
     //occlusion_point_cloud_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__point_cloud_occlusion";
@@ -1621,11 +1645,12 @@ void createPipeline( WhittedState &state )
 
     state.pipeline_compile_options = {
         false,                                                  // usesMotionBlur
-        OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,          // traversableGraphFlags
+        OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY,          // traversableGraphFlags
         5,    /* RadiancePRD uses 5 payloads */                 // numPayloadValues
         5,    /* Parallelogram intersection uses 5 attrs */     // numAttributeValues
         OPTIX_EXCEPTION_FLAG_NONE,                              // exceptionFlags
-        "params"                                                // pipelineLaunchParamsVariableName
+        "params",                                                // pipelineLaunchParamsVariableName
+        OPTIX_PRIMITIVE_TYPE_FLAGS_SPHERE | OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM
     };
 
     // Prepare program groups
@@ -1935,7 +1960,7 @@ void createSBT( WhittedState &state )
                     { 1.0f, 0.6f, 0.8f }, 
                     { 1.0f, 0.4f, 0.6f },   
                     { 0.9f, 0.9f, 0.9f },  
-                    { 0.8f, 0.6f, 0.6f }, 
+                    { 0.0f, 0.0f, 0.0f },
                     64,                  
                 };
             }
